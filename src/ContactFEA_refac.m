@@ -34,10 +34,8 @@ while(Flag10 == 1)%Incremental loop
             Flag20 = 0; Iter = Iter + 1;
             Residual=zeros(AllDOF,1);GKF = sparse(AllDOF,AllDOF);
             ExtFVect=zeros(AllDOF,1); NCon=size(FEMod.Cons,1);
-            %[Residual,GKF]=GetStiffnessAndForce(FEMod,Disp,Residual,GKF,Dtan);%Internal force and tangent stiffness matrix
-        
-            [Residual,GKF]=GetStiffnessAndForce_simpler(FEMod.Nodes,FEMod.Eles,Disp,Residual,GKF,Dtan);%Internal force and tangent stiffness matrix
-            
+            [Residual,GKF]=GetStiffnessAndForce(FEMod,Disp,Residual,GKF,Dtan);%Internal force and tangent stiffness matrix
+       
             [contactPairs,GKF,Residual]=DetermineContactState(FEMod,...
                 contactPairs,Dt,PreDisp,GKF,Residual,Disp);
             if size(FEMod.ExtF,1)>0, LOC = Dim*(FEMod.ExtF(:,1)-1)+FEMod.ExtF(:,2);

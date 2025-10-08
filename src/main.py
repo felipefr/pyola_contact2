@@ -12,57 +12,8 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from contactFEA_python import *
 
-octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
-
-
-def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
-    XG = np.array([-0.57735026918963, 0.57735026918963])
-    WGT = np.array([1.0, 1.0])
-
-    for IE in range(Eles.shape[0]):
-        Elxy = Nodes[Eles[IE, :] - 1, :]  # zero-based
-        IDOF = np.zeros(24, dtype=int)
-        for I in range(8):
-            II = 3 * I # zero-based
-            IDOF[II:II+3] = np.arange(3 * (Eles[IE, I] - 1),
-                                      3 * (Eles[IE, I] - 1) + 3)
-        
-
-        EleDisp = Disp[IDOF].reshape(3, 8)
-        
-        for LX in range(2):
-            for LY in range(2):
-                for LZ in range(2):
-                    E1, E2, E3 = XG[LX], XG[LY], XG[LZ]
-                    Shpd, Det = GetShapeFunction([E1, E2, E3], Elxy)
-                    FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det
-                    
-                    F = EleDisp @ Shpd.T + np.eye(3)
-                    Strain = 0.5 * (F.T @ F - np.eye(3))
-                    StrainVoigt = ten2voigt(Strain, 'strain')
-                    StressVoigt = Dtan @ StrainVoigt
-                    BN, BG = getBmatrices(Shpd, F)
-                
-                    # Assemble internal force vector
-                    Residual[IDOF] -= FAC * (BN.T @ StressVoigt)
-                    
-                    # Convert stress to tensor form
-                    Stress = voigt2ten(StressVoigt, 'stress')
-                    
-                    # Build SHEAD (block diagonal stress tensor)
-                    SHEAD = np.zeros((9, 9))
-                    SHEAD[0:3, 0:3] = Stress
-                    SHEAD[3:6, 3:6] = Stress
-                    SHEAD[6:9, 6:9] = Stress
-                    
-                    # Element stiffness matrix
-                    EKF = BN.T @ Dtan @ BN + BG.T @ SHEAD @ BG
-
-                    # Assemble global tangent stiffness matrix
-                    GKF[np.ix_(IDOF, IDOF)] += FAC * EKF
-                    
-    return Residual, GKF
-
+# octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
+octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
 # octave.ContactFEA_refac()
 
@@ -82,12 +33,12 @@ Disp=np.zeros((AllDOF,1));
 
 IterOld=GivenIter+1; NRConvergeNum=0; Istep = -1; Flag10 = 1;
 
-op = "pytho"
+# op = "python"
+# count = 0
+# while count<1:  # Incremental loop
+#     count += 1
 
-count = 0
-while count<1:  # Incremental loop
-    count += 1
-# while Flag10 == 1:  # Incremental loop
+while Flag10 == 1:  # Incremental loop
     Flag10 = 0
     Flag11 = 1
     Flag20 = 1
@@ -133,12 +84,14 @@ while count<1:  # Incremental loop
             # Internal force and tangent stiffness
             
             # if(op == "python"):
-            Residual2, GKF2 = GetStiffnessAndForce(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual2.flatten(), GKF2, Dtan)
-            Residual2 = Residual2.reshape((len(Residual2),1))
-        
-            Residual, GKF = octave.GetStiffnessAndForce_simpler(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual, GKF, Dtan, nout = 2)
+            # Residual2, GKF2 = GetStiffnessAndForce(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual2.flatten(), GKF2, Dtan)
+            # Residual2 = Residual2.reshape((len(Residual2),1))
+            # GKF = GKF2
+            # Residual = Residual2
             
-            print(np.allclose(GKF, GKF2))
+            Residual, GKF = octave.GetStiffnessAndForce(FEMod, Disp, Residual, GKF, Dtan, nout = 2)
+            
+            # print(np.allclose(GKF, GKF2))
             
             
             # Contact state
@@ -201,9 +154,9 @@ while count<1:  # Incremental loop
 
             
             # Solve linear system: GKF \ Residual
-            print(spla.norm(GKF))
-            print(np.linalg.norm(Residual)) 
+            # print(spla.norm(GKF))
+            # print(np.linalg.norm(Residual)) 
             IncreDisp = spla.spsolve(GKF.tocsr(), Residual)
-            print(np.linalg.norm(IncreDisp))  
+            # print(np.linalg.norm(IncreDisp))  
             Disp[:,0] += IncreDisp
             Flag20 = 1

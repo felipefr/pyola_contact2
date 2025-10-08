@@ -1,7 +1,8 @@
 % =================== FEM Assembly Functions =======================
 %  ===  Obtain global stiffness matrix and internal force vector ===
 function [Resdual,GKF]=GetStiffnessAndForce(FEMod,Disp,Resdual,GKF,Dtan)
-XG=[-0.57735026918963D0, 0.57735026918963D0];WGT=[1.00000000000000D0, 1.00000000000000D0];
+XG=[-0.57735026918963D0, 0.57735026918963D0];
+WGT=[1.00000000000000D0, 1.00000000000000D0];
 for IE=1:size(FEMod.Eles,1)
     Elxy=FEMod.Nodes(FEMod.Eles(IE,:),:);IDOF=zeros(1,24);
     for I=1:8,II=(I-1)*3+1;IDOF(II:II+2)=(FEMod.Eles(IE,I)-1)*3+1:(FEMod.Eles(IE,I)-1)*3+3;end
