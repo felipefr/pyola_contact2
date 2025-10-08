@@ -1,17 +1,32 @@
-function [contactPairs] = updateContact(contactPairs)
-for im=1:size(contactPairs,1)%Update contact information
-    if contactPairs(im).CurContactState==0%no contact
-        contactPairs(im).PreMasterSurf=[0;0]; contactPairs(im).rp=0; contactPairs(im).sp=0;
-        contactPairs(im).PreContactState=0; contactPairs(im).Pre_g=0;
-        contactPairs(im).Pressure=0;contactPairs(im).Traction=0;
-    else%slip or stick contact
-        contactPairs(im).PreMasterSurf=contactPairs(im).CurMasterSurf;
-        contactPairs(im).rp=contactPairs(im).rc; contactPairs(im).sp=contactPairs(im).sc;
-        contactPairs(im).PreContactState=contactPairs(im).CurContactState;
-        contactPairs(im).Pre_g=contactPairs(im).Cur_g;
+function contactPairs = updateContact(contactPairs)
+% === Update contact history between time steps (struct-of-vectors version) ===
+
+nPairs = size(contactPairs.SlaveSurf, 2);
+
+for i = 1:nPairs  % Loop over contact pairs
+    if contactPairs.CurContactState(i) == 0
+        % --- No contact ---
+        contactPairs.PreMasterSurf(:, i) = [0; 0];
+        contactPairs.rp(i) = 0;
+        contactPairs.sp(i) = 0;
+        contactPairs.PreContactState(i) = 0;
+        contactPairs.Pre_g(i) = 0;
+        contactPairs.Pressure(i) = 0;
+        contactPairs.Traction(i) = 0;
+    else
+        % --- Slip or stick contact ---
+        contactPairs.PreMasterSurf(:, i) = contactPairs.CurMasterSurf(:, i);
+        contactPairs.rp(i) = contactPairs.rc(i);
+        contactPairs.sp(i) = contactPairs.sc(i);
+        contactPairs.PreContactState(i) = contactPairs.CurContactState(i);
+        contactPairs.Pre_g(i) = contactPairs.Cur_g(i);
     end
-    contactPairs(im).rc=0; contactPairs(im).sc=0;
-    contactPairs(im).Cur_g=0;contactPairs(im).CurMasterSurf=[0;0];
-    contactPairs(im).CurContactState=0;
+
+    % --- Reset current step quantities ---
+    contactPairs.rc(i) = 0;
+    contactPairs.sc(i) = 0;
+    contactPairs.Cur_g(i) = 0;
+    contactPairs.CurMasterSurf(:, i) = [0; 0];
+    contactPairs.CurContactState(i) = 0;
 end
 end

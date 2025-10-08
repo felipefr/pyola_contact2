@@ -1,15 +1,41 @@
-%  ===  Initialize contact pair information  ===
-function [ContactPairs]=InitializeContactPairs(FEMod)
-ContactPair.pc=1e6; ContactPair.SlaveSurf=[0;0];ContactPair.SlaveIntegralPoint=0;
-ContactPair.CurMasterSurf=[0;0];ContactPair.rc=0;ContactPair.sc=0;
-ContactPair.Cur_g=0;ContactPair.Pre_g=0;ContactPair.PreMasterSurf=[0;0];
-ContactPair.rp=0;ContactPair.sp=0;ContactPair.CurContactState=0;ContactPair.PreContactState=0;
-ContactPair.Pressure=0;ContactPair.Traction=0;
-ContactPairs = repmat(ContactPair, size(FEMod.SlaveSurf, 2) * 4, 1);
-for i=1:size(FEMod.SlaveSurf,2)
-    ContactPairs(4*i-3).SlaveSurf=FEMod.SlaveSurf(:,i); ContactPairs(4*i-3).SlaveIntegralPoint=1;
-    ContactPairs(4*i-2).SlaveSurf=FEMod.SlaveSurf(:,i); ContactPairs(4*i-2).SlaveIntegralPoint=2;
-    ContactPairs(4*i-1).SlaveSurf=FEMod.SlaveSurf(:,i); ContactPairs(4*i-1).SlaveIntegralPoint=3;
-    ContactPairs(4*i).SlaveSurf=FEMod.SlaveSurf(:,i); ContactPairs(4*i).SlaveIntegralPoint=4;
+function ContactPairs = InitializeContactPairs(FEMod)
+% InitializeContactPairs - Initialize contact data as a struct of arrays
+%
+% Input:
+%   FEMod - structure with FEM data, must include SlaveSurf (2×n)
+%
+% Output:
+%   ContactPairs - structure where each field is a vector or matrix
+%                  (not a vector of structs)
+
+nSlave = size(FEMod.SlaveSurf, 2);
+nGauss = 4;
+nPairs = nSlave * nGauss;
+
+% Preallocate arrays
+ContactPairs.pc  = 1e6 * ones(1, nPairs);      % scalar constant per pair
+ContactPairs.SlaveSurf = zeros(2, nPairs);     % 2×nPairs
+ContactPairs.SlaveIntegralPoint = zeros(1, nPairs);
+
+ContactPairs.CurMasterSurf = zeros(2, nPairs);
+ContactPairs.rc = zeros(1, nPairs);
+ContactPairs.sc = zeros(1, nPairs);
+ContactPairs.Cur_g = zeros(1, nPairs);
+ContactPairs.Pre_g = zeros(1, nPairs);
+ContactPairs.PreMasterSurf = zeros(2, nPairs);
+ContactPairs.rp = zeros(1, nPairs);
+ContactPairs.sp = zeros(1, nPairs);
+ContactPairs.CurContactState = zeros(1, nPairs);
+ContactPairs.PreContactState = zeros(1, nPairs);
+ContactPairs.Pressure = zeros(1, nPairs);
+ContactPairs.Traction = zeros(1, nPairs);
+
+% Fill fields
+for i = 1:nSlave
+    for j = 1:nGauss
+        k = (i-1)*nGauss + j;
+        ContactPairs.SlaveSurf(:,k) = FEMod.SlaveSurf(:,i);
+        ContactPairs.SlaveIntegralPoint(k) = j;
+    end
 end
 end

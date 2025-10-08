@@ -1,3 +1,4 @@
+% === Determine the contact state, then calculate contact stiffness and contact force ===
 function [ContactPairs, GKF, Residual] = DetermineContactState(FEMod, ContactPairs, ...
     Dt, PreDisp, GKF, Residual, Disp)
 
@@ -12,19 +13,17 @@ IntegralPoint = [-gp, -gp;
 ContactPairs = ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint);
 FricFac = FEMod.FricFac;
 
-nPairs = size(ContactPairs.SlaveSurf, 2);
-
 % --- Loop over contact pairs
-for i = 1:nPairs
+for i = 1:size(ContactPairs, 1)
 
     % Check for active contact
-    if ContactPairs.CurMasterSurf(1, i) == 0
+    if ContactPairs(i).CurMasterSurf(1) == 0
         continue; % No contact
     end
 
     % Case 1: first contact or frictionless contact
-    if (FricFac == 0) || (ContactPairs.PreMasterSurf(1, i) == 0)
-        ContactPairs.CurContactState(i) = 2; % Slip
+    if (FricFac == 0) || (ContactPairs(i).PreMasterSurf(1) == 0)
+        ContactPairs(i).CurContactState = 2; % Slip
 
         [GKF, Residual, ContactPairs] = CalculateContactKandF(FEMod, ...
             ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp, IntegralPoint);
@@ -33,21 +32,19 @@ for i = 1:nPairs
     end
 
     % --- Case 2: possible stick/slip contact ---
-    CurIP = IntegralPoint(ContactPairs.SlaveIntegralPoint(i), :)';
+    CurIP = IntegralPoint(ContactPairs(i).SlaveIntegralPoint, :)';
     [Na, N1a, N2a] = GetSurfaceShapeFunction(CurIP(1), CurIP(2));
 
-    % Slave surface coordinates
-    [CurSlaveSurfXYZ, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf(:, i));
+    [CurSlaveSurfXYZ, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs(i).SlaveSurf);
     Cur_x1 = sum(Na .* CurSlaveSurfXYZ, 1)';
 
-    % Master surface (previous)
-    [Nb, ~, ~] = GetSurfaceShapeFunction(ContactPairs.rp(i), ContactPairs.sp(i));
-    [CurMasterSurfXYZ_p, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.PreMasterSurf(:, i));
+    [Nb, ~, ~] = GetSurfaceShapeFunction(ContactPairs(i).rp, ContactPairs(i).sp);
+    [CurMasterSurfXYZ_p, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs(i).PreMasterSurf);
     Cur_x2_p = sum(Nb .* CurMasterSurfXYZ_p, 1)';
 
     % Relative motion and projection
     gs = Cur_x2_p - Cur_x1;
-    tv = ContactPairs.pc(i) * gs;
+    tv = ContactPairs(i).pc * gs;
 
     % Current normal
     Cur_N1Xa = sum(N1a .* CurSlaveSurfXYZ, 1)';
@@ -62,9 +59,9 @@ for i = 1:nPairs
     % Slip/stick criterion
     fai = tt_trial - FricFac * tn_trial;
     if fai < 0
-        ContactPairs.CurContactState(i) = 1; % Stick
+        ContactPairs(i).CurContactState = 1; % Stick
     else
-        ContactPairs.CurContactState(i) = 2; % Slip
+        ContactPairs(i).CurContactState = 2; % Slip
     end
 
     % Update stiffness and force

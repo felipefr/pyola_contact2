@@ -1,15 +1,13 @@
 function ContactPairs = ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint)
 % === Find nearest master surface corresponding to slave surface point ===
 
-nPairs = size(ContactPairs.SlaveSurf, 2);
-
-for i = 1:nPairs
+for i = 1:size(ContactPairs, 1)
 
     % --- Get current slave surface geometry ---
-    [SlaveSurfNodeXYZ, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf(:, i));
+    [SlaveSurfNodeXYZ, ~] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs(i).SlaveSurf);
 
     % Current integration point coordinates
-    CurIP = IntegralPoint(ContactPairs.SlaveIntegralPoint(i), :)';
+    CurIP = IntegralPoint(ContactPairs(i).SlaveIntegralPoint, :)';
     [N, N1, N2] = GetSurfaceShapeFunction(CurIP(1), CurIP(2));
 
     % Compute slave surface point and tangents
@@ -24,16 +22,18 @@ for i = 1:nPairs
 
     % --- Update contact pair information ---
     if Exist == 1
-        ContactPairs.CurMasterSurf(:, i) = [MasterEle; MasterSign];
-        ContactPairs.rc(i)   = rr;
-        ContactPairs.sc(i)   = ss;
-        ContactPairs.Cur_g(i) = gg;
+        %fprintf('contact detected at %d\n', i)
+        ContactPairs(i).CurMasterSurf = [MasterEle; MasterSign];
+        ContactPairs(i).rc   = rr;
+        ContactPairs(i).sc   = ss;
+        ContactPairs(i).Cur_g = gg;
     else
-        ContactPairs.CurMasterSurf(:, i) = [0; 0];
-        ContactPairs.rc(i)   = 0;
-        ContactPairs.sc(i)   = 0;
-        ContactPairs.Cur_g(i) = 0;
-        ContactPairs.CurContactState(i) = 0;
+        %fprintf('contact non detected at %d\n', i)
+        ContactPairs(i).CurMasterSurf = [0; 0];
+        ContactPairs(i).rc   = 0;
+        ContactPairs(i).sc   = 0;
+        ContactPairs(i).Cur_g = 0;
+        ContactPairs(i).CurContactState = 0;
     end
 end
 end

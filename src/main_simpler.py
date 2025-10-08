@@ -12,16 +12,6 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from contactFEA_python import *
 
-# trying to correct the problem with matlab vector of structs
-def ensure_list(x):
-    """Ensure consistent list of dicts, even for single structs."""
-    if isinstance(x, dict):
-        return [x]
-    elif isinstance(x, (list, np.ndarray)):
-        return list(x)
-    else:
-        raise TypeError(f"Unexpected type {type(x)}")
-
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -108,11 +98,10 @@ for i in range(Nit - 1):
 
         # Newton–Raphson update
         IncreDisp = spla.spsolve(GKF.tocsr(), Residual)
-        # sIncreDisp = np.linalg.solve(GKF, Residual)
         Disp[:,0] += IncreDisp.flatten()
         
     print("norm disp = ", np.linalg.norm(Disp))
 
-# UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
-# octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
+UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
+octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
 
