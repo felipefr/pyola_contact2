@@ -22,13 +22,11 @@ for i = 1:size(ContactPairs, 1)
 
     % --- Update contact pair information ---
     if Exist == 1
-        %fprintf('contact detected at %d\n', i)
         ContactPairs(i).CurMasterSurf = [MasterEle; MasterSign];
         ContactPairs(i).rc   = rr;
         ContactPairs(i).sc   = ss;
         ContactPairs(i).Cur_g = gg;
     else
-        %fprintf('contact non detected at %d\n', i)
         ContactPairs(i).CurMasterSurf = [0; 0];
         ContactPairs(i).rc   = 0;
         ContactPairs(i).sc   = 0;

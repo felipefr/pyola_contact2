@@ -19,6 +19,7 @@ octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # do
 
 FEMod = octave.ModelInformation_Beam()
 Dt=0.01; MinDt=1.0E-7; IterMax=16; GivenIter=8; MaxDt=0.1; Time = 0; # N-R parameters
+TimeMax = 1.0
 
 # Material
 E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
@@ -33,7 +34,7 @@ Disp=np.zeros((AllDOF,1));
 
 IterOld=GivenIter+1; NRConvergeNum=0; Istep = -1; Flag10 = 1;
 
-# op = "python"
+op = "python"
 # count = 0
 # while count<1:  # Incremental loop
 #     count += 1
@@ -56,7 +57,7 @@ while Flag10 == 1:  # Incremental loop
         Flag11 = 0
 
         # Check whether the calculation is completed
-        if (Time - 1) > 1e-10:
+        if (Time - TimeMax) > 1e-10:
             if (1 + Dt - Time) > 1e-10:
                 Dt = 1 + Dt - Time
                 Time = 1
@@ -73,9 +74,7 @@ while Flag10 == 1:  # Incremental loop
             Iter += 1
 
             GKF = sp.lil_matrix((AllDOF, AllDOF))  # sparse stiffness
-            GKF2 = sp.lil_matrix((AllDOF, AllDOF))  # sparse stiffness
             Residual = np.zeros((AllDOF,1))
-            Residual2 = np.zeros((AllDOF,1))
             ExtFVect = np.zeros((AllDOF,1))
             # Residual = np.zeros(AllDOF)
             # ExtFVect = np.zeros(AllDOF)
@@ -83,13 +82,11 @@ while Flag10 == 1:  # Incremental loop
 
             # Internal force and tangent stiffness
             
-            # if(op == "python"):
-            # Residual2, GKF2 = GetStiffnessAndForce(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual2.flatten(), GKF2, Dtan)
-            # Residual2 = Residual2.reshape((len(Residual2),1))
-            # GKF = GKF2
-            # Residual = Residual2
-            
-            Residual, GKF = octave.GetStiffnessAndForce(FEMod, Disp, Residual, GKF, Dtan, nout = 2)
+            if(op == "python"):
+                Residual, GKF = GetStiffnessAndForce(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual.flatten(), GKF, Dtan)
+                Residual = Residual.reshape((len(Residual),1))
+            else:
+                Residual, GKF = octave.GetStiffnessAndForce(FEMod, Disp, Residual, GKF, Dtan, nout = 2)
             
             # print(np.allclose(GKF, GKF2))
             
@@ -160,3 +157,8 @@ while Flag10 == 1:  # Incremental loop
             # print(np.linalg.norm(IncreDisp))  
             Disp[:,0] += IncreDisp
             Flag20 = 1
+    
+    print(np.linalg.norm(Disp))  
+
+UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
+octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))

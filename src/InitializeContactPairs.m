@@ -1,6 +1,5 @@
-
 %  ===  Initialize contact pair information  ===
-function ContactPairs=InitializeContactPairs(FEMod)
+function [ContactPairs]=InitializeContactPairs(FEMod)
 ContactPair.pc=1e6; ContactPair.SlaveSurf=[0;0];ContactPair.SlaveIntegralPoint=0;
 ContactPair.CurMasterSurf=[0;0];ContactPair.rc=0;ContactPair.sc=0;
 ContactPair.Cur_g=0;ContactPair.Pre_g=0;ContactPair.PreMasterSurf=[0;0];

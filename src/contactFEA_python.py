@@ -37,16 +37,16 @@ def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
             IDOF[II:II+3] = np.arange(3 * (Eles[IE, I] - 1),
                                       3 * (Eles[IE, I] - 1) + 3)
         
-        EleDisp = Disp[IDOF].reshape(3, 8)
-        
+        EleDisp = Disp[IDOF].reshape(3, 8, order='F')
         for LX in range(2):
             for LY in range(2):
                 for LZ in range(2):
                     E1, E2, E3 = XG[LX], XG[LY], XG[LZ]
                     Shpd, Det = GetShapeFunction([E1, E2, E3], Elxy)
-                    FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det
+                    FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det                
                     
                     F = EleDisp @ Shpd.T + np.eye(3)
+                    
                     Strain = 0.5 * (F.T @ F - np.eye(3))
                     StrainVoigt = ten2voigt(Strain, 'strain')
                     StressVoigt = Dtan @ StrainVoigt

@@ -1,6 +1,6 @@
-% === Determine the contact state, then calculate contact stiffness and contact force ===
 function [ContactPairs, GKF, Residual] = DetermineContactState(FEMod, ContactPairs, ...
     Dt, PreDisp, GKF, Residual, Disp)
+% === Determine the contact state, then calculate contact stiffness and contact force ===
 
 % --- Integration points (2x2 Gauss)
 gp = 1/sqrt(3);
