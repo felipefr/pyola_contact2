@@ -13,7 +13,7 @@ for i=1:size(ConNode,2)
 end
 MasterSurf=[483:3:792;4*ones(1,size(483:3:792,2))];%Contact boundary
 SlaveSurf=[1:4:477;6*ones(1,size([1:4:477],2))];
-FricFac=0.0;
+FricFac=0.1;
 FEMod=struct('Nodes',Nodes,'Eles',Eles,'Prop',Prop,'ExtF',ExtF,'Cons',Cons,'MasterSurf',MasterSurf,'SlaveSurf',SlaveSurf,'FricFac',FricFac);
 end
 function [nodes, ele] = ReadMesh( fname )%Obtain node and element from ".inp" 

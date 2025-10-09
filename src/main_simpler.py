@@ -10,7 +10,10 @@ from oct2py import octave
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
-from contactFEA_python import *
+from fem_lib import *
+from contact_lib import *
+from utils import *
+from timeit import default_timer as timer
 
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
@@ -30,7 +33,8 @@ E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
 Dtan= octave.getIsotropicCelas(E,nu);
 
 # --- Contact ---
-contactPairs = octave.InitializeContactPairs(FEMod, nout = 1)
+# contactPairs = octave.InitializeContactPairs(FEMod, nout = 1)
+contactPairs = InitializeContactPairs(FEMod)
 # contactPairs = ensure_list(contactPairs) # expected to work , but useless
 
 NodeNum, Dim = FEMod.Nodes.shape
@@ -42,6 +46,7 @@ FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF)
 
 Disp=np.zeros((AllDOF,1), order = 'F');
 
+start = timer()
 # --- Main loop ---
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
@@ -70,8 +75,14 @@ for i in range(Nit - 1):
         Disp = Disp.reshape((-1,1), order = 'F') 
     
         # Contact update
-        contactPairs, GKF, Residual = octave.DetermineContactState(
-            FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp, nout = 3)
+        # contactPairs, GKF, Residual = octave.DetermineContactState(
+        #     FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp, nout = 3)
+        # flattenising_struct(contactPairs)
+        
+        contactPairs, GKF, Residual = DetermineContactState(
+            FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
+        
+        flattenising_struct(contactPairs)
 
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:
@@ -93,7 +104,8 @@ for i in range(Nit - 1):
 
         # Check convergence
         if normRes < tolNR:
-            contactPairs = octave.updateContact(contactPairs, nout = 1)
+            # contactPairs = octave.updateContact(contactPairs, nout = 1)
+            updateContact(contactPairs)
             break
 
         # Newton–Raphson update
@@ -102,6 +114,8 @@ for i in range(Nit - 1):
         
     print("norm disp = ", np.linalg.norm(Disp))
 
+end = timer()
+print("time : ", end-start)
 UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
 octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
 

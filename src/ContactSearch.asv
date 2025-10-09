@@ -21,12 +21,15 @@ for i = 1:nPairs
     % --- Find nearest master surface via ray tracing ---
     [rr, ss, MasterEle, MasterSign, gg, Exist] = GetContactPointbyRayTracing( ...
         FEMod, Disp, SlavePoint, SlavePointTan);
-    % 
-    % if(i>479)
-    % [SlaveSurfNodeXYZ, N, N1, N2]
-    % fprintf("%f %f %f %f %f %d \n", rr, ss, MasterEle, MasterSign, gg, Exist)
-    % pause
-    % end
+    
+    if(i>479)
+    SlaveSurfNodeXYZ
+    print(N)
+    print(N1)
+    print(N2)
+    fprintf("%f %f %f %f %f %d \n", rr, ss, MasterEle, MasterSign, gg, Exist)
+    pause
+    end
     % --- Update contact pair information ---
     if Exist == 1
         ContactPairs.CurMasterSurf(:, i) = [MasterEle; MasterSign];

@@ -24,6 +24,9 @@ for i = 1:size(FEMod.MasterSurf, 2)
     % Compute current deformed coordinates
     MasterSurfDis = reshape(Disp(MasterSurfDOF), 3, numel(MasterSurfNode))';
     MasterSurfXYZ = FEMod.Nodes(MasterSurfNode, :) + MasterSurfDis;
+    
+    % MasterSurfXYZ
+    % pause
 
     % Find nearest node to slave point
     for j = 1:4
@@ -40,6 +43,10 @@ end
 [AllMinMasterSurfNum, ~] = find(AllMasterNode == MinMasterPoint);
 ContactCandidate = zeros(numel(AllMinMasterSurfNum), 8);
 ContactCandidate(:, 5) = 1e7;
+
+% AllMasterNode
+% MinMasterPoint
+% pause
 
 % --- Loop over candidate master surfaces ---
 for i = 1:numel(AllMinMasterSurfNum)
