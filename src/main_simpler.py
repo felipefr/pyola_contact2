@@ -74,16 +74,18 @@ for i in range(Nit - 1):
         Residual = Residual.reshape((-1,1), order = 'F') 
         Disp = Disp.reshape((-1,1), order = 'F') 
     
-        # Contact update
+        # Contact update ( Only Frictionless case working)
         # contactPairs, GKF, Residual = octave.DetermineContactState(
         #     FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp, nout = 3)
         # flattenising_struct(contactPairs)
         
-        contactPairs, GKF, Residual = DetermineContactState(
+        # contactPairs, GKF, Residual = DetermineContactState(
+        #     FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
+        
+        contactPairs, GKF, Residual = DetermineFrictionlessContactState(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
-        flattenising_struct(contactPairs)
-
+        
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:
             LOC = Dim * (FEMod.ExtF[:, 0].astype(int) - 1) + FEMod.ExtF[:, 1].astype(int) - 1  # convert to 0-based

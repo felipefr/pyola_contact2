@@ -20,7 +20,7 @@ TimeList = linspace(0.0, Tmax, 10);
 E=FEMod.Prop(1); nu=FEMod.Prop(2);
 Dtan= getIsotropicCelas(E,nu);
 
-contactPairs=InitializeContactPairs(FEMod);
+ContactPairs=InitializeContactPairs(FEMod);
 
 [NodeNum, Dim] = size(FEMod.Nodes); 
 AllDOF = Dim*NodeNum;
@@ -46,9 +46,10 @@ for i = 1 : (Nit-1)
         
         %Internal force and tangent stiffness matrix
         [Residual,GKF]=GetStiffnessAndForce(FEMod,Disp,Residual,GKF,Dtan);
-
-        [contactPairs,GKF,Residual]=DetermineContactState(FEMod,...
-             contactPairs,Dt,PreDisp,GKF,Residual,Disp);
+        
+        
+        [ContactPairs,GKF,Residual]=DetermineFrictionlessContactState(FEMod,...
+             ContactPairs,Dt,PreDisp,GKF,Residual,Disp);
         
         %Load boundary
         % node number: FEMod.ExtF(:,1) ?
@@ -73,7 +74,7 @@ for i = 1 : (Nit-1)
 
         %Determine whether it converges
         if(normRes<tolNR) 
-            updateContact(contactPairs);
+            updateContact(ContactPairs);
             % contactPairs.CurContactState
             break;
         end

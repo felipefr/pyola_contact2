@@ -9,19 +9,19 @@ function [GKF, Residual, ContactPairs] = CalculateContactKandF(FEMod, ContactPai
 
 FricFac = FEMod.FricFac;
 
-if ContactPairs.CurContactState(i) == 1  % --- Stick contact state ---
-    % --- slave geometry at current IP ---
+if ContactPairs.CurContactState(i) == 1 || ContactPairs.CurContactState(i) == 2
+     % --- current slave geometry & previous slave geometry ---
     CurIP = IntegralPoint(ContactPairs.SlaveIntegralPoint(i), :)';
     [Na, N1a, N2a] = GetSurfaceShapeFunction(CurIP(1), CurIP(2));
     [CurSlaveSurfXYZ, SlaveSurfDOF] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf(:, i));
+    [PreSlaveSurfNodeXYZ, ~]            = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.SlaveSurf(:, i)); % only needed for slip
 
-    Cur_x1    = sum(Na .* CurSlaveSurfXYZ, 1)';                 % slave contact point
-    Cur_N1Xa  = sum(N1a .* CurSlaveSurfXYZ, 1)';                % slave tangent 1
-    Cur_N2Xa  = sum(N2a .* CurSlaveSurfXYZ, 1)';                % slave tangent 2
+    [Cur_n, J1, Cur_N1Xa, Cur_N2Xa, Cur_x1] = getSurfaceGeometry(Na, N1a, N2a, CurSlaveSurfXYZ);
+    [~, ~, Pre_N1Xa, Pre_N2Xa, Pre_x1] = getSurfaceGeometry(Na, N1a, N2a, PreSlaveSurfNodeXYZ); % only needed for slip
 
-    Cur_n = cross(Cur_N1Xa, Cur_N2Xa);
-    Cur_n = Cur_n / norm(Cur_n);
-    J1 = norm(cross(Cur_N1Xa, Cur_N2Xa));                       % surface Jacobian
+end
+
+if ContactPairs.CurContactState(i) == 1  % --- Stick contact state ---
 
     % --- master geometry (previous master surface) ---
     [Nb, ~, ~] = GetSurfaceShapeFunction(ContactPairs.rp(i), ContactPairs.sp(i));
@@ -31,70 +31,27 @@ if ContactPairs.CurContactState(i) == 1  % --- Stick contact state ---
     % --- relative sliding vector and traction ---
     gs = Cur_x2_p - Cur_x1;
     tv = ContactPairs.pc(i) * gs;
+    ContactNodeForce = AssembleContactForce(Na, Nb, J1, tv);
+
+    ContactDOF = [SlaveSurfDOF; MasterSurfDOF];
+    Residual(ContactDOF, :) = Residual(ContactDOF, :) + ContactNodeForce;
 
     ContactPairs.Pressure(i) = abs(tv' * Cur_n);
     ContactPairs.Traction(i) = abs(sqrt(tv' * tv));             % save pressure/traction
-
-    % --- Assemble contact nodal force (24 x 1) ---
-    ContactNodeForce = zeros(24, 1);
-    ContactDOF = [SlaveSurfDOF; MasterSurfDOF];
-    for a = 1:4
-        ContactNodeForce((3*a-2):3*a)       = Na(a) * J1 * tv;
-        ContactNodeForce(((3*a-2):3*a) + 12) = -Nb(a) * J1 * tv;
-    end
-    Residual(ContactDOF, :) = Residual(ContactDOF, :) + ContactNodeForce;
 
     % --- stiffness components for stick case ---
     Cur_g1_hat_slave = TransVect2SkewSym(Cur_N1Xa);
     Cur_g2_hat_slave = TransVect2SkewSym(Cur_N2Xa);
     Ac = (kron(N1a', Cur_g2_hat_slave) - kron(N2a', Cur_g1_hat_slave)) / J1;
+    
+    Stick_K = getStickK(Na, Nb, pc, tv, Ac, Cur_n, J1)
 
-    Stick_K11 = zeros(12); Stick_K12 = zeros(12);
-    Stick_K21 = zeros(12); Stick_K22 = zeros(12);
-
-    for aa = 1:4
-        for bb = 1:4
-            % K11 term
-            tempK = ( -Na(aa) * Na(bb) * ContactPairs.pc(i) * eye(3) ...
-                      - Na(aa) * ( -tv * (Ac(:, (3*bb-2):(3*bb)) * Cur_n)' ) ) * J1;
-            idxA = (3*aa-2):(3*aa); idxB = (3*bb-2):(3*bb);
-            Stick_K11(idxA, idxB) = Stick_K11(idxA, idxB) + tempK;
-
-            % K12 term
-            tempK = ( Na(aa) * Nb(bb) * ContactPairs.pc(i) * eye(3) ) * J1;
-            Stick_K12(idxA, idxB) = Stick_K12(idxA, idxB) + tempK;
-
-            % K21 term
-            tempK = ( Nb(aa) * Na(bb) * ContactPairs.pc(i) * eye(3) ...
-                      + Nb(aa) * ( -tv * (Ac(:, (3*bb-2):(3*bb)) * Cur_n)' ) ) * J1;
-            Stick_K21(idxA, idxB) = Stick_K21(idxA, idxB) + tempK;
-
-            % K22 term
-            tempK = ( -Nb(aa) * Nb(bb) * ContactPairs.pc(i) * eye(3) ) * J1;
-            Stick_K22(idxA, idxB) = Stick_K22(idxA, idxB) + tempK;
-        end
-    end
-
-    Stick_K = [Stick_K11, Stick_K12; Stick_K21, Stick_K22];
     GKF(ContactDOF, ContactDOF) = GKF(ContactDOF, ContactDOF) - Stick_K;
 
 elseif ContactPairs.CurContactState(i) == 2  % --- Slip contact state ---
     tn = ContactPairs.Cur_g(i) * ContactPairs.pc(i);
-
-    % --- current slave geometry & previous slave geometry ---
-    CurIP = IntegralPoint(ContactPairs.SlaveIntegralPoint(i), :)';
-    [Na, N1a, N2a] = GetSurfaceShapeFunction(CurIP(1), CurIP(2));
-    [CurSlaveSurfXYZ, SlaveSurfDOF]     = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf(:, i));
-    [PreSlaveSurfNodeXYZ, ~]            = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.SlaveSurf(:, i));
-
-    Cur_x1 = sum(Na .* CurSlaveSurfXYZ, 1)';  Pre_x1 = sum(Na .* PreSlaveSurfNodeXYZ, 1)';
+        
     dx1 = Cur_x1 - Pre_x1;
-
-    Pre_N1Xa = sum(N1a .* PreSlaveSurfNodeXYZ, 1)'; Pre_N2Xa = sum(N2a .* PreSlaveSurfNodeXYZ, 1)';
-    Cur_N1Xa = sum(N1a .* CurSlaveSurfXYZ, 1)';   Cur_N2Xa = sum(N2a .* CurSlaveSurfXYZ, 1)';
-
-    Cur_n = cross(Cur_N1Xa, Cur_N2Xa); Cur_n = Cur_n / norm(Cur_n);
-    J1 = norm(cross(Cur_N1Xa, Cur_N2Xa));
     PN = eye(3) - Cur_n * Cur_n';
 
     dg1_slave = Cur_N1Xa - Pre_N1Xa;
@@ -107,10 +64,11 @@ elseif ContactPairs.CurContactState(i) == 2  % --- Slip contact state ---
     [CurMasterSurfNodeXYZ, MasterSurfDOF] = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.CurMasterSurf(:, i));
     [PreMasterSurfNodeXYZ, ~]             = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.CurMasterSurf(:, i));
 
-    Cur_x2 = sum(Nb .* CurMasterSurfNodeXYZ, 1)';   Pre_x2 = sum(Nb .* PreMasterSurfNodeXYZ, 1)';
-    Cur_N1Xb = sum(N1b .* CurMasterSurfNodeXYZ, 1)'; Cur_N2Xb = sum(N2b .* CurMasterSurfNodeXYZ, 1)';
+    [~, ~, Cur_N1Xb, Cur_N2Xb, Cur_x2] = getSurfaceGeometry(Nb, N1b, N2b, CurMasterSurfNodeXYZ);
+    [~, ~, ~, ~, Pre_x2] = getSurfaceGeometry(Nb, N1b, N2b, PreMasterSurfNodeXYZ);
+
     dx2 = Cur_x2 - Pre_x2;
-    
+
     % --- relative velocity and tangential direction ---
     r1 = ContactPairs.Cur_g(i) * c1 + dx1 - dx2;
     vr = r1 / Dt;
@@ -124,22 +82,14 @@ elseif ContactPairs.CurContactState(i) == 2  % --- Slip contact state ---
     end
 
     % --- contact nodal force (with friction) ---
-    ContactNodeForce = zeros(24, 1);
     tv = tn * (Cur_n + FricFac * s1);
-    temp_f1a = tv * J1;
-
-    ContactPairs.Pressure(i)  = abs(tn);
-    ContactPairs.Traction(i) = abs(sqrt(tv' * tv));  % save pressure/traction
-
-    for a = 1:4
-        f1a = Na(a) * temp_f1a;
-        f2b = -Nb(a) * temp_f1a;
-        ContactNodeForce((3*a-2):3*a)       = f1a;
-        ContactNodeForce(((3*a-2):3*a) + 12) = f2b;
-    end
+    ContactNodeForce = AssembleContactForce(Na, Nb, J1, tv);
 
     ContactDOF = [SlaveSurfDOF; MasterSurfDOF];
     Residual(ContactDOF, :) = Residual(ContactDOF, :) + ContactNodeForce;
+
+    ContactPairs.Pressure(i)  = abs(tn);
+    ContactPairs.Traction(i) = abs(sqrt(tv' * tv));  % save pressure/traction
 
     % --- precompute projection matrices and related arrays ---
     A_ab = [ Cur_N1Xa' * Cur_N1Xb, Cur_N1Xa' * Cur_N2Xb;
@@ -171,33 +121,7 @@ elseif ContactPairs.CurContactState(i) == 2  % --- Slip contact state ---
     N12b = [N1b'; N2b'];
     Gbc = ContactPairs.Cur_g(i) * (N12b' * a_ab * N12a);
 
-    % --- frictionless stiffness baseline ---
-    Frictionless_K11 = zeros(12); Frictionless_K12 = zeros(12);
-    Frictionless_K21 = zeros(12); Frictionless_K22 = zeros(12);
-
-    for aa = 1:4
-        for bb = 1:4
-            idxA = (3*aa-2):(3*aa); idxB = (3*bb-2):(3*bb);
-
-            tempK = ( -Na(aa) * Na(bb) * ContactPairs.pc(i) * N1_wave ...
-                      - Na(aa) * tn * (Ac(:, idxB) + Mc1_bar(:, idxB) * N1) ) * J1;
-            Frictionless_K11(idxA, idxB) = Frictionless_K11(idxA, idxB) + tempK;
-
-            tempK = ( Na(aa) * Nb(bb) * ContactPairs.pc(i) * N1_wave ) * J1;
-            Frictionless_K12(idxA, idxB) = Frictionless_K12(idxA, idxB) + tempK;
-
-            tempK = ( Nb(aa) * Na(bb) * ContactPairs.pc(i) * N1_wave ...
-                      + Nb(aa) * tn * (Ac(:, idxB) + Mc1_bar(:, idxB) * N1) ...
-                      + Na(bb) * tn * Mb2_bar(:, idxA) + Gbc(aa, bb) * tn * N1 ) * J1;
-            Frictionless_K21(idxA, idxB) = Frictionless_K21(idxA, idxB) + tempK;
-
-            tempK = ( -Nb(aa) * Nb(bb) * ContactPairs.pc(i) * N1_wave ...
-                      - Nb(bb) * tn * Mb2_bar(:, idxA) ) * J1;
-            Frictionless_K22(idxA, idxB) = Frictionless_K22(idxA, idxB) + tempK;
-        end
-    end
-
-    FrictionlessK = [Frictionless_K11, Frictionless_K12; Frictionless_K21, Frictionless_K22];
+    FrictionlessK = getFrictionlessK(Na, Nb, ContactPairs.pc(i), tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1);
 
     Frictional_K = zeros(24);
 
@@ -255,4 +179,58 @@ elseif ContactPairs.CurContactState(i) == 2  % --- Slip contact state ---
     GKF(ContactDOF, ContactDOF) = GKF(ContactDOF, ContactDOF) - ContactK;
 end
 
+end
+
+
+function [n, J, N1X, N2X, x] = getSurfaceGeometry(N, N1, N2, SurfXYZ)
+x   = sum(N .* SurfXYZ,1)';
+N1X = sum(N1 .* SurfXYZ,1)';
+N2X = sum(N2 .* SurfXYZ,1)';
+n = cross(N1X, N2X);
+n = n / norm(n);
+J = norm(cross(N1X, N2X));
+end
+
+function ContactNodeForce = AssembleContactForce(Na, Nb, J1, tv)
+ContactNodeForce = zeros(24,1);
+for a = 1:4
+    ContactNodeForce((3*a-2):3*a)       = Na(a) * J1 * tv;
+    ContactNodeForce(((3*a-2):3*a)+12) = -Nb(a) * J1 * tv;
+end
+end
+
+function Stick_K = getStickK(Na, Nb, pc, tv, Ac, Cur_n, J1)
+Stick_K11 = zeros(12); Stick_K12 = zeros(12);
+Stick_K21 = zeros(12); Stick_K22 = zeros(12);
+for aa = 1:4
+    for bb = 1:4
+        idxA = (3*aa-2):(3*aa); idxB = (3*bb-2):(3*bb);
+        tempK = (-Na(aa)*Na(bb)*pc*eye(3) - Na(aa)*(-tv*(Ac(:,idxB)*Cur_n)'))*J1;
+        Stick_K11(idxA, idxB) = Stick_K11(idxA, idxB) + tempK;
+        tempK = (Na(aa)*Nb(bb)*pc*eye(3))*J1; Stick_K12(idxA, idxB)=Stick_K12(idxA, idxB)+tempK;
+        tempK = (Nb(aa)*Na(bb)*pc*eye(3)+Nb(aa)*(-tv*(Ac(:,idxB)*Cur_n)'))*J1; Stick_K21(idxA, idxB)=Stick_K21(idxA, idxB)+tempK;
+        tempK = (-Nb(aa)*Nb(bb)*pc*eye(3))*J1; Stick_K22(idxA, idxB)=Stick_K22(idxA, idxB)+tempK;
+    end
+end
+Stick_K = [Stick_K11, Stick_K12; Stick_K21, Stick_K22];
+end
+
+function FrictionlessK = getFrictionlessK(Na, Nb, pc, tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1)
+Frictionless_K11 = zeros(12); Frictionless_K12 = zeros(12);
+Frictionless_K21 = zeros(12); Frictionless_K22 = zeros(12);
+
+for aa = 1:4
+    for bb = 1:4
+        idxA = (3*aa-2):(3*aa); idxB = (3*bb-2):(3*bb);
+        tempK = (-Na(aa)*Na(bb)*pc*N1_wave - Na(aa)*tn*(Ac(:,idxB)+Mc1_bar(:,idxB)*N1))*J1;
+        Frictionless_K11(idxA, idxB) = Frictionless_K11(idxA, idxB) + tempK;
+        tempK = (Na(aa)*Nb(bb)*pc*N1_wave)*J1;
+        Frictionless_K12(idxA, idxB) = Frictionless_K12(idxA, idxB) + tempK;
+        tempK = (Nb(aa)*Na(bb)*pc*N1_wave + Nb(aa)*tn*(Ac(:,idxB)+Mc1_bar(:,idxB)*N1) + Na(bb)*tn*Mb2_bar(:,idxA) + Gbc(aa,bb)*tn*N1)*J1;
+        Frictionless_K21(idxA, idxB) = Frictionless_K21(idxA, idxB) + tempK;
+        tempK = (-Nb(aa)*Nb(bb)*pc*N1_wave - Nb(bb)*tn*Mb2_bar(:,idxA))*J1;
+        Frictionless_K22(idxA, idxB) = Frictionless_K22(idxA, idxB) + tempK;
+    end
+end
+FrictionlessK = [Frictionless_K11, Frictionless_K12; Frictionless_K21, Frictionless_K22];
 end
