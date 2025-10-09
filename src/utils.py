@@ -7,6 +7,36 @@ Created on Thu Oct  9 10:35:06 2025
 """
 import numpy as np
 
+def get_isotropic_celas(E, nu):
+    """
+    Return 6x6 isotropic elasticity (tangent) matrix for 3D elasticity.
+    
+    Parameters
+    ----------
+    E : float
+        Young's modulus
+    nu : float
+        Poisson's ratio
+    
+    Returns
+    -------
+    Dtan : (6,6) ndarray
+        Constitutive matrix in Voigt notation
+    """
+    fac = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
+    
+    Dtan = np.array([
+        [1,           nu / (1 - nu), nu / (1 - nu), 0, 0, 0],
+        [nu / (1 - nu), 1,           nu / (1 - nu), 0, 0, 0],
+        [nu / (1 - nu), nu / (1 - nu), 1,           0, 0, 0],
+        [0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0, 0],
+        [0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0],
+        [0, 0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu))]
+    ], dtype=float)
+    
+    Dtan *= fac
+    return Dtan
+
 # Convert a 3D vector to its skew-symmetric matrix (cross-product matrix).
 def TransVect2SkewSym(Vect):
     Vect = np.asarray(Vect).flatten()
