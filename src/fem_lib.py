@@ -11,82 +11,62 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import numba
-# from oct2py import octave
-# octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
-
-
-@numba.jit(nopython=True)
-def ten2voigt(T, fac):
-    return np.array([T[0,0], T[1,1], T[2,2],
-                     fac*T[0,1], fac*T[1,2], fac*T[0,2]], dtype = np.float64)
-
-@numba.jit(nopython=True)
-def voigt2ten(v, fac):
-    T = np.array([[v[0], v[3]/fac, v[5]/fac],
-                  [v[3]/fac, v[1], v[4]/fac],
-                  [v[5]/fac, v[4]/fac, v[2]]], dtype = np.float64)
-    return T
-
-
-
-@numba.jit(nopython=True)
-def get_dofs_given_nodes_ids(nodes_ids):
-    DOFs = np.empty(nodes_ids.shape[0] * 3, dtype=np.int64)
-    for m, node in enumerate(nodes_ids):
-        DOFs[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
-
-    return DOFs
+from utils import *
 
 # @numba.jit(nopython=True)
-def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
-    XG = np.array([-0.57735026918963, 0.57735026918963])
-    WGT = np.array([1.0, 1.0])
-
-    
+def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):    
     for IE in range(Eles.shape[0]):
         Elxy = Nodes[Eles[IE, :], :]  # zero-based
-        
         IDOF = get_dofs_given_nodes_ids(Eles[IE, :])
         EleDisp = Disp[IDOF].reshape((8,3)).T # before was fortran order
-        for LX in range(2):
-            for LY in range(2):
-                for LZ in range(2):
-                    E1, E2, E3 = XG[LX], XG[LY], XG[LZ]
-                    Shpd, Det = GetShapeFunction([E1, E2, E3], Elxy)
-                    FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det                
-                    
-                    F = EleDisp @ Shpd.T + np.eye(3)
-                    
-                    Strain = 0.5 * (F.T @ F - np.eye(3))
-                    
-                    # ten2voigt
-                    # f = 2.0 if kind == 'strain' else 1.0
-                    StrainVoigt = ten2voigt(Strain, 2.)
-                    StressVoigt = Dtan @ StrainVoigt
-                    BN, BG = getBmatrices(Shpd, F)
-                
-                    # Assemble internal force vector
-                    Residual[IDOF] -= FAC * (BN.T @ StressVoigt)
-                    
-                    # Convert stress to tensor form
-                    
-                    # # ten2voigt
-                    # f = 2.0 if kind == 'strain' else 1.0
-                    Stress = voigt2ten(StressVoigt, 1.)
-                    
-                    # Build SHEAD (block diagonal stress tensor)
-                    SHEAD = np.zeros((9, 9))
-                    SHEAD[0:3, 0:3] = Stress
-                    SHEAD[3:6, 3:6] = Stress
-                    SHEAD[6:9, 6:9] = Stress
-                    
-                    # Element stiffness matrix
-                    EKF = BN.T @ Dtan @ BN + BG.T @ SHEAD @ BG
 
-                    # Assemble global tangent stiffness matrix
-                    GKF[np.ix_(IDOF, IDOF)] += FAC * EKF
+        ResL, GKL = GetStiffnessAndForceElemental(Elxy, EleDisp, Dtan)
+        Residual[IDOF] += ResL 
+        GKF[np.ix_(IDOF, IDOF)] += GKL
                     
     return Residual, GKF
+
+
+@numba.jit(nopython=True)
+def GetStiffnessAndForceElemental(NodesL, DispL, Dtan):
+    XG = np.array([-0.57735026918963, 0.57735026918963])
+    WGT = np.array([1.0, 1.0])
+    
+    ResL = np.zeros(24, dtype = np.float64) 
+    GKL = np.zeros((24,24), dtype = np.float64) 
+    for LX in range(2):
+        for LY in range(2):
+            for LZ in range(2):
+                E1, E2, E3 = XG[LX], XG[LY], XG[LZ]
+                Shpd, Det = GetShapeFunction([E1, E2, E3], NodesL)
+                FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det                
+                
+                F = DispL @ Shpd.T + np.eye(3)
+                
+                Strain = 0.5 * (F.T @ F - np.eye(3))
+                
+                StrainVoigt = ten2voigt(Strain, 2.) # fac 2 to strain
+                StressVoigt = Dtan @ StrainVoigt
+                BN, BG = getBmatrices(Shpd, F)
+            
+                # Assemble internal force vector
+                ResL -= FAC * (BN.T @ StressVoigt)
+                
+                Stress = voigt2ten(StressVoigt, 1.) # fac 1 to strain
+                
+                # Build SHEAD (block diagonal stress tensor)
+                SHEAD = np.zeros((9, 9))
+                SHEAD[0:3, 0:3] = Stress
+                SHEAD[3:6, 3:6] = Stress
+                SHEAD[6:9, 6:9] = Stress
+                
+                # Element stiffness matrix
+                GKL += FAC * (BN.T @ Dtan @ BN + BG.T @ SHEAD @ BG)
+
+
+    return ResL, GKL
+
+
 
 @numba.jit(nopython=True)
 def getBmatrices(Shpd, F):
@@ -165,23 +145,3 @@ def GetShapeFunction(XI, Elxy):
     Det = np.linalg.det(GJ)
     ShpD = np.linalg.inv(GJ) @ DSF
     return ShpD, Det
-
-
-# === Placeholders for missing routines ===
-def ModelInformation_Beam():
-    return {
-        "Prop": np.array([210e9, 0.3]),
-        "Nodes": np.zeros((8, 3)),
-        "Eles": np.zeros((1, 8), dtype=int),
-        "Cons": np.zeros((0, 3)),
-        "ExtF": np.zeros((0, 3)),
-        "SlaveSurf": np.zeros((3, 0)),
-        "MasterSurf": np.zeros((2, 0)),
-        "FricFac": 0.0
-    }
-
-def InitializeContactPairs(FEMod):
-    return []
-
-def DetermineContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp):
-    return ContactPairs, GKF, Residual

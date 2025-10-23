@@ -9,7 +9,6 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
-import optimised_functions as opt
 
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -141,18 +140,18 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
 
     for i in range(nPairs):
         # --- Get current slave surface geometry ---
-        SlaveSurfNode = opt.GetSurfaceNode(Eles_[SlaveSurf[0,i], :], SlaveSurf[1,i])
+        SlaveSurfNode = GetSurfaceNode(Eles_[SlaveSurf[0,i], :], SlaveSurf[1,i])
         SlaveSurfNodeXYZ = get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
 
         # Current integration point coordinates (MATLAB -> Python: subtract 1)
         ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
         CurIP = IntegralPoint[ip_idx, :].astype(np.float64)
         
-        N, dN = opt.GetSurfaceShapeFunction(CurIP)
+        N, dN = GetSurfaceShapeFunction(CurIP)
         SlavePoint = SlaveSurfNodeXYZ.T@N
         SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
 
-        rr, ss, MasterEle, MasterSign, gg, Exist = opt.GetContactPointbyRayTracing(
+        rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
             Eles_, FEMod.Nodes, MasterSurf_, Disp, SlavePoint, SlavePointTan)
             
         if Exist == 1:
@@ -185,17 +184,18 @@ def CalculateFrictionlessContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, 
 
     # --- current slave geometry & previous slave geometry ---
     ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1             # MATLAB->Python index
-    CurIP = IntegralPoint[ip_idx, :]                                 # shape (2,)
+    CurIP = IntegralPoint[ip_idx, :].astype(np.float64)                                 # shape (2,)
 
-    Na, N1a, N2a = GetSurfaceShapeFunction(float(CurIP[0]), float(CurIP[1]))
-    CurSlaveSurfXYZ, SlaveSurfDOF = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf[:, i])
-    PreSlaveSurfNodeXYZ, _ = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.SlaveSurf[:, i])
-
-    get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
-
+    Na, [N1a, N2a] = GetSurfaceShapeFunction(CurIP)
+    SlaveSurfNodes = GetSurfaceNode(FEMod.Eles[int(ContactPairs.SlaveSurf[0,i])-1, :], 
+                                    int(ContactPairs.SlaveSurf[1,i]), matlab_shift=1)
+    SlaveSurfDOF = get_dofs_given_nodes_ids(SlaveSurfNodes)
+    CurSlaveSurfXYZ = get_deformed_position_given_dofs(SlaveSurfNodes, FEMod.Nodes, Disp, SlaveSurfDOF)
+    PreSlaveSurfXYZ = get_deformed_position_given_dofs(SlaveSurfNodes, FEMod.Nodes, PreDisp, SlaveSurfDOF)
+    
     # geometric quantities
     Cur_n, J1, Cur_N1Xa, Cur_N2Xa, Cur_x1 = get_surface_geometry(Na, N1a, N2a, CurSlaveSurfXYZ)
-    _, _, Pre_N1Xa, Pre_N2Xa, Pre_x1 = get_surface_geometry(Na, N1a, N2a, PreSlaveSurfNodeXYZ)
+    _, _, Pre_N1Xa, Pre_N2Xa, Pre_x1 = get_surface_geometry(Na, N1a, N2a, PreSlaveSurfXYZ)
 
     # normal traction
     tn = ContactPairs.Cur_g[i] * ContactPairs.pc[i]
@@ -209,12 +209,15 @@ def CalculateFrictionlessContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, 
     c1 = PN.dot(m1) / J1
 
     # --- master geometry at current and previous steps ---
-    Nb, N1b, N2b = GetSurfaceShapeFunction(ContactPairs.rc[i], ContactPairs.sc[i])
-    CurMasterSurfNodeXYZ, MasterSurfDOF = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.CurMasterSurf[:, i])
-    PreMasterSurfNodeXYZ, _ = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.CurMasterSurf[:, i])
+    Nb, [N1b, N2b] = GetSurfaceShapeFunction(np.array((ContactPairs.rc[i], ContactPairs.sc[i]), dtype = np.float64))
+    MasterSurfNodes = GetSurfaceNode(FEMod.Eles[int(ContactPairs.CurMasterSurf[0,i])-1, :], 
+                                     int(ContactPairs.CurMasterSurf[1,i]), matlab_shift=1)
+    MasterSurfDOF = get_dofs_given_nodes_ids(MasterSurfNodes)
+    CurMasterSurfXYZ = get_deformed_position_given_dofs(MasterSurfNodes, FEMod.Nodes, Disp, MasterSurfDOF)
+    PreMasterSurfXYZ = get_deformed_position_given_dofs(MasterSurfNodes, FEMod.Nodes, PreDisp, MasterSurfDOF)
 
-    _, _, Cur_N1Xb, Cur_N2Xb, Cur_x2 = get_surface_geometry(Nb, N1b, N2b, CurMasterSurfNodeXYZ)
-    _, _, _, _, Pre_x2 = get_surface_geometry(Nb, N1b, N2b, PreMasterSurfNodeXYZ)
+    _, _, Cur_N1Xb, Cur_N2Xb, Cur_x2 = get_surface_geometry(Nb, N1b, N2b, CurMasterSurfXYZ)
+    _, _, _, _, Pre_x2 = get_surface_geometry(Nb, N1b, N2b, PreMasterSurfXYZ)
 
     dx2 = Cur_x2 - Pre_x2
 
@@ -422,3 +425,123 @@ def get_frictionless_K(Na, Nb, pc, tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J
 
     return FrictionlessK
 
+@numba.jit(nopython=True)
+def newton_raphson_raytracing(SlavePoint, SlavePointTan, MasterSurfXYZ, Exist, Tol):
+    rs = np.zeros(2)
+    for j in range(int(1e8)):
+        N, dN = GetSurfaceShapeFunction(rs)
+
+        NX = MasterSurfXYZ.T@N
+        NTX = dN @ MasterSurfXYZ # (2,4)x(4,3) --> (2,3)
+                
+        # SlavePointTan is (3,2) , fai is (2,), SlavePoint and Nx are (3,)
+        fai = SlavePointTan.T @ (SlavePoint - NX)
+
+        if j == 500:
+            rs[0] = 1e5
+            Exist = -1
+            break
+
+        if np.max(np.abs(fai)) < Tol:
+            break
+
+        KT = (NTX@SlavePointTan).T
+        drs = solve_2x2_system_nb(KT, fai)
+
+        rs += drs
+
+    return rs, Exist
+
+# Todo1: node to python convention
+# Todo2: eliminate repeated conde : "Build DOFs"
+# Todo3: automate get deformed coordinates
+# Todo4: Find the nearest node can be improved
+def GetContactPointbyRayTracing(Eles, Nodes, MasterSurf, Disp, SlavePoint, SlavePointTan):
+    """
+    Obtain master surface contact point by ray tracing.
+    FEMod numbering follows MATLAB (1-based)
+    """
+
+    Tol = 1e-4
+    Exist = -1
+    MinDis = 1e8
+    MinGrow = 0
+    Ming = -1e3
+    MinMasterPoint = None
+
+    nMasterSurf = MasterSurf.shape[1]
+    AllMasterNode = np.zeros((nMasterSurf, 4), dtype = np.int64)
+    
+    SlavePoint_ = SlavePoint.flatten().astype(np.float64)
+    
+    # --- Find node closest to integration point from slave surface ---
+    for i in range(nMasterSurf):
+        # MATLAB element index is 1-based
+        MasterSurfNode = GetSurfaceNode(Eles[MasterSurf[0, i], :],
+                                        MasterSurf[1, i])
+        AllMasterNode[i, :] = MasterSurfNode
+
+        MasterSurfXYZ = get_deformed_position(MasterSurfNode, Nodes, Disp)
+                
+        # Find nearest node to slave point
+        ll = MasterSurfXYZ - SlavePoint_  # Result is a (4, 3) array
+        Distances = np.linalg.norm(ll, axis=1) # Result is a (4,) array
+        min_idx = np.argmin(Distances)
+        current_min_distance = Distances[min_idx]
+        if current_min_distance < MinDis:
+            MinDis = current_min_distance
+            MinMasterPoint = MasterSurfNode[min_idx]
+    
+    
+    # --- Determine candidate master surfaces ---
+    AllMinMasterSurfNum = np.where(AllMasterNode == MinMasterPoint)[0]
+    ContactCandidate = np.zeros((AllMinMasterSurfNum.shape[0], 8))
+    ContactCandidate[:, 4] = 1e7  # MATLAB column 5
+    
+    # --- Loop over candidate master surfaces ---
+    for idx, surf_idx in enumerate(AllMinMasterSurfNum):
+        MasterSurfNode = AllMasterNode[surf_idx, :]        
+        MasterSurfXYZ = get_deformed_position(MasterSurfNode, Nodes, Disp)
+
+        # Ray-tracing Newton-Raphson iteration
+        rs, Exist = newton_raphson_raytracing(SlavePoint_, SlavePointTan, MasterSurfXYZ, Exist, Tol)
+
+        # --- Save nearest RayTracing point ---
+        if np.max(np.abs(rs)) <= 1.01:
+            v = np.cross(SlavePointTan[:, 0], SlavePointTan[:, 1])
+            v /= np.linalg.norm(v)
+            
+            N, _ = GetSurfaceShapeFunction(rs)
+            NX = MasterSurfXYZ.T@N
+            
+            g = np.dot(NX - SlavePoint_, v)
+
+            ContactCandidate[idx, 0] = MasterSurf[0, surf_idx]
+            ContactCandidate[idx, 1] = MasterSurf[1, surf_idx]
+            ContactCandidate[idx, 2:5] = np.array((rs[0], rs[1], g))
+            ContactCandidate[idx, 5:8] = v
+
+            if Exist <= 0:
+                if g >= 0 and abs(Ming) > abs(g):
+                    Exist = 0; MinGrow = idx; Ming = g
+                elif g < 0:
+                    Exist = 1; MinGrow = idx; Ming = g
+            elif Exist == 1:
+                if g < 0 and abs(Ming) > abs(g):
+                    Exist = 1; MinGrow = idx; Ming = g
+
+    # --- Final contact outputs ---
+    if Exist == 0 or Exist == 1:
+        MasterEle = ContactCandidate[MinGrow, 0] + 1
+        MasterSign = ContactCandidate[MinGrow, 1] + 1
+        rr = ContactCandidate[MinGrow, 2]
+        ss = ContactCandidate[MinGrow, 3]
+        gg = ContactCandidate[MinGrow, 4]
+    else:
+        MasterEle = 1e10
+        MasterSign = 1e10
+        rr = 1e10
+        ss = 1e10
+        gg = 1e10
+
+    return rr, ss, MasterEle, MasterSign, gg, Exist

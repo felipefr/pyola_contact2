@@ -7,8 +7,26 @@ Created on Thu Oct  9 10:35:06 2025
 """
 import numpy as np
 import numba
-# from utils import *
-from fem_lib import get_dofs_given_nodes_ids
+
+@numba.jit(nopython=True)
+def ten2voigt(T, fac):
+    return np.array([T[0,0], T[1,1], T[2,2],
+                     fac*T[0,1], fac*T[1,2], fac*T[0,2]], dtype = np.float64)
+
+@numba.jit(nopython=True)
+def voigt2ten(v, fac):
+    T = np.array([[v[0], v[3]/fac, v[5]/fac],
+                  [v[3]/fac, v[1], v[4]/fac],
+                  [v[5]/fac, v[4]/fac, v[2]]], dtype = np.float64)
+    return T
+
+@numba.jit(nopython=True)
+def get_dofs_given_nodes_ids(nodes_ids):
+    DOFs = np.empty(nodes_ids.shape[0] * 3, dtype=np.int64)
+    for m, node in enumerate(nodes_ids):
+        DOFs[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
+
+    return DOFs
 
 
 FACE_INDEX = np.array([[3, 2, 1, 0], 
@@ -62,9 +80,8 @@ def get_surface_geometry(N, N1, N2, SurfXYZ):
     return n, J, NTx[0,:], NTx[1,:], x
 
 
-
 @numba.jit(nopython=True)
-def GetSurfaceNode(elementLE, SurfSign):
+def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
     """
     GetSurfaceNode - Return the node indices defining a surface of a hexahedral element.
 
@@ -73,7 +90,7 @@ def GetSurfaceNode(elementLE, SurfSign):
     elementLE : array_like (expected to be a 1D NumPy array)
         1D array of 8 node indices for the element.
     SurfSign : int
-        Surface identifier (1–6).
+        Surface identifier (0–5).
 
     Returns
     -------
@@ -81,11 +98,59 @@ def GetSurfaceNode(elementLE, SurfSign):
         Array of 4 node indices for the specified face (1D, int).
     """
 
-    return elementLE[FACE_INDEX[SurfSign-1]].astype(np.int64) - 1
+    return elementLE[FACE_INDEX[SurfSign-matlab_shift]].astype(np.int64) - matlab_shift
 
 
 @numba.jit(nopython=True)
-def GetSurfaceShapeFunction(r, s):
+def solve_2x2_system_nb(A, b):
+    """
+    Solves a 2x2 linear system Ax = b for x, where:
+    A = [[a11, a12], [a21, a22]]
+    b = [b1, b2]
+
+    Parameters
+    ----------
+    A : np.ndarray (float, 2x2)
+        The coefficient matrix.
+    b : np.ndarray (float, 1D, size 2)
+        The right-hand side vector.
+
+    Returns
+    -------
+    x : np.ndarray (float, 1D, size 2)
+        The solution vector [x1, x2].
+    """
+    # Unpack matrix A elements for clarity
+    a11 = A[0, 0]
+    a12 = A[0, 1]
+    a21 = A[1, 0]
+    a22 = A[1, 1]
+
+    # Calculate the determinant of A
+    det_A = a11 * a22 - a12 * a21
+
+    # Check for singularity (det_A close to zero)
+    if abs(det_A) < 1e-15:
+        # Return zeros or raise an error for a singular matrix
+        return np.zeros(2, dtype=A.dtype)
+
+    # Calculate the inverse of A: inv(A) = (1/det_A) * [[a22, -a12], [-a21, a11]]
+    inv_det = 1.0 / det_A
+
+    # Calculate x = inv(A) @ b
+    x1 = inv_det * (a22 * b[0] - a12 * b[1])
+    x2 = inv_det * (-a21 * b[0] + a11 * b[1])
+
+    # Create the solution vector
+    x = np.empty(2, dtype=A.dtype)
+    x[0] = x1
+    x[1] = x2
+
+    return x
+
+# === Surface shape function and derivatives ===
+@numba.jit(nopython=True)
+def GetSurfaceShapeFunction(rs):
     """
     GetSurfaceShapeFunction - Compute shape functions and their derivatives
     for a quadrilateral surface element (4-node).
@@ -102,12 +167,13 @@ def GetSurfaceShapeFunction(r, s):
     dN : ndarray
         Derivative with respect to rs (2,4)
     """
+    r, s = rs
     
     N  = 0.25*np.array([(r - 1) * (s - 1), -(r + 1) * (s - 1), (r + 1) * (s + 1), -(r - 1) * (s + 1)])
     dN = 0.25*np.array([[(s - 1),-(s - 1), (s + 1), -(s + 1)], 
                         [(r - 1), -(r + 1), (r + 1), -(r - 1)]])
     
-    return N, dN[0,:], dN[1,:]
+    return N, dN
 
 @numba.jit(nopython=True)
 def get_deformed_position(nodes_ids, nodes, disp):
@@ -116,45 +182,13 @@ def get_deformed_position(nodes_ids, nodes, disp):
     # return deformed coordinates
     return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
 
-# === Obtain surface node coordinates and DOFs ===
-def GetSurfaceNodeLocation(FEMod, Disp, Surf):
-    """
-    GetSurfaceNodeLocation - Return coordinates and DOF indices of nodes on a surface.
-
-    Parameters
-    ----------
-    FEMod : Struct or dict
-        Finite element model data; must contain:
-            FEMod['Eles'] : element connectivity array (nElem × 8)
-            FEMod['Nodes'] : node coordinates (nNode × 3)
-    Disp : ndarray
-        Global displacement vector (size = total DOFs)
-    Surf : ndarray
-        [element_index, surface_id] (2,)
-
-    Returns
-    -------
-    SurfNodeXYZ : ndarray
-        Coordinates (current) of surface nodes (4 × 3)
-    SurfNodeDOF : ndarray
-        DOF indices of surface nodes (12,)
-    """
-    # Extract element and surface
-    element_index = int(Surf[0]) - 1  # MATLAB -> Python index
-    SurfSign = int(Surf[1])
-
-    # Get surface nodes (convert to 0-based indices)
-    element_nodes = np.asarray(FEMod.Eles[element_index, :], dtype=int)
-    SurfNode = GetSurfaceNode(element_nodes, SurfSign)
-    SurfNodeDOF = get_dofs_given_nodes_ids(SurfNode)
-
-    # Get nodal displacements and coordinates
-    SurfNodeDis = Disp[SurfNodeDOF].reshape((len(SurfNode),3))
-    SurfNodeXYZ = FEMod.Nodes[SurfNode, :] + SurfNodeDis
-
-    return SurfNodeXYZ, SurfNodeDOF
+@numba.jit(nopython=True)
+def get_deformed_position_given_dofs(nodes_ids, nodes, disp, DOFs):
+    # return deformed coordinates
+    return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
 
 
+@numba.jit(nopython=True)
 def get_isotropic_celas(E, nu):
     """
     Return 6x6 isotropic elasticity (tangent) matrix for 3D elasticity.
@@ -180,7 +214,7 @@ def get_isotropic_celas(E, nu):
         [0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0, 0],
         [0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0],
         [0, 0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu))]
-    ], dtype=float)
+    ], dtype=np.float64)
     
     Dtan *= fac
     return Dtan

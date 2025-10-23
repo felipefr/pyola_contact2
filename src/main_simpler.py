@@ -47,6 +47,7 @@ Disp=np.zeros(AllDOF);
 start = timer()
 # --- Main loop ---
 Eles_ = FEMod.Eles.astype(np.int64)-1
+# FEMod.Eles = FEMod.Eles.astype(np.int64)-1
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
     Dt = TimeList[i + 1] - TimeList[i]
