@@ -142,7 +142,7 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
     for i in range(nPairs):
         # --- Get current slave surface geometry ---
         SlaveSurfNode = opt.GetSurfaceNode(Eles_[SlaveSurf[0,i], :], SlaveSurf[1,i])
-        SlaveSurfNodeXYZ = opt.get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
+        SlaveSurfNodeXYZ = get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
 
         # Current integration point coordinates (MATLAB -> Python: subtract 1)
         ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
@@ -190,6 +190,8 @@ def CalculateFrictionlessContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, 
     Na, N1a, N2a = GetSurfaceShapeFunction(float(CurIP[0]), float(CurIP[1]))
     CurSlaveSurfXYZ, SlaveSurfDOF = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf[:, i])
     PreSlaveSurfNodeXYZ, _ = GetSurfaceNodeLocation(FEMod, PreDisp, ContactPairs.SlaveSurf[:, i])
+
+    get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
 
     # geometric quantities
     Cur_n, J1, Cur_N1Xa, Cur_N2Xa, Cur_x1 = get_surface_geometry(Na, N1a, N2a, CurSlaveSurfXYZ)
@@ -301,10 +303,8 @@ def DetermineFrictionlessContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Res
     ])
 
     # --- Contact search and friction factor
-    # ContactPairs = octave.ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint, nout = 1)
-    # flattenising_struct(ContactPairs)
-    
-    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint)
+
+    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
     # support both dict-like and attribute-style FEMod
     FricFac = FEMod['FricFac'] if isinstance(FEMod, dict) else FEMod.FricFac
 
@@ -327,7 +327,7 @@ def DetermineFrictionlessContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Res
             # flattenising_struct(ContactPairs)
             
             GKF, Residual, ContactPairs = CalculateFrictionlessContactKandF(
-                FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp, IntegralPoint) 
+                FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp.reshape((-1,1)), IntegralPoint) 
             continue
 
     return ContactPairs, GKF, Residual

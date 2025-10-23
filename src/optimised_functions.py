@@ -8,7 +8,7 @@ Created on Thu Oct 23 17:17:18 2025
 
 import numba
 import numpy as np
-# from utils import *
+from utils import get_deformed_position, get_dofs_given_nodes_ids
 
 # === Surface shape function and derivatives ===
 @numba.jit(nopython=True)
@@ -139,25 +139,6 @@ def newton_raphson_raytracing(SlavePoint, SlavePointTan, MasterSurfXYZ, Exist, T
         rs += drs
 
     return rs[0], rs[1], Exist
-
-@numba.jit(nopython=True)
-def get_dofs_given_nodes_ids(nodes_ids):
-    DOFs = np.empty(nodes_ids.shape[0] * 3, dtype=np.int64)
-    for m, node in enumerate(nodes_ids):
-        DOFs[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
-
-    return DOFs
-
-
-def get_deformed_position(nodes_ids, nodes, disp):
-    # Build DOF list
-    DOFs = get_dofs_given_nodes_ids(nodes_ids)
-    n_nodes = nodes_ids.shape[0]
-    # Current deformed coordinates
-    u = disp[DOFs].reshape((3, n_nodes), order = 'F').T # numba does not like 'F'
-    x = nodes[nodes_ids, :] + u  
-    return x 
-
 
 # Todo1: node to python convention
 # Todo2: eliminate repeated conde : "Build DOFs"

@@ -10,34 +10,44 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
+import numba
 # from oct2py import octave
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 
-def ten2voigt(T, kind='strain'):
-    f = 2.0 if kind == 'strain' else 1.0
-    return np.array([T[0,0], T[1,1], T[2,2],
-                     f*T[0,1], f*T[1,2], f*T[0,2]])
 
-def voigt2ten(v, kind='strain'):
-    f = 0.5 if kind == 'strain' else 1.0
-    T = np.array([[v[0], f*v[3], f*v[5]],
-                  [f*v[3], v[1], f*v[4]],
-                  [f*v[5], f*v[4], v[2]]])
+@numba.jit(nopython=True)
+def ten2voigt(T, fac):
+    return np.array([T[0,0], T[1,1], T[2,2],
+                     fac*T[0,1], fac*T[1,2], fac*T[0,2]], dtype = np.float64)
+
+@numba.jit(nopython=True)
+def voigt2ten(v, fac):
+    T = np.array([[v[0], v[3]/fac, v[5]/fac],
+                  [v[3]/fac, v[1], v[4]/fac],
+                  [v[5]/fac, v[4]/fac, v[2]]], dtype = np.float64)
     return T
 
+
+
+@numba.jit(nopython=True)
+def get_dofs_given_nodes_ids(nodes_ids):
+    DOFs = np.empty(nodes_ids.shape[0] * 3, dtype=np.int64)
+    for m, node in enumerate(nodes_ids):
+        DOFs[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
+
+    return DOFs
+
+# @numba.jit(nopython=True)
 def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
     XG = np.array([-0.57735026918963, 0.57735026918963])
     WGT = np.array([1.0, 1.0])
 
+    
     for IE in range(Eles.shape[0]):
-        Elxy = Nodes[Eles[IE, :] - 1, :]  # zero-based
-        IDOF = np.zeros(24, dtype=int)
-        for I in range(8):
-            II = 3 * I # zero-based
-            IDOF[II:II+3] = np.arange(3 * (Eles[IE, I] - 1),
-                                      3 * (Eles[IE, I] - 1) + 3)
+        Elxy = Nodes[Eles[IE, :], :]  # zero-based
         
-        EleDisp = Disp[IDOF].reshape(3, 8, order='F')
+        IDOF = get_dofs_given_nodes_ids(Eles[IE, :])
+        EleDisp = Disp[IDOF].reshape((8,3)).T # before was fortran order
         for LX in range(2):
             for LY in range(2):
                 for LZ in range(2):
@@ -48,7 +58,10 @@ def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
                     F = EleDisp @ Shpd.T + np.eye(3)
                     
                     Strain = 0.5 * (F.T @ F - np.eye(3))
-                    StrainVoigt = ten2voigt(Strain, 'strain')
+                    
+                    # ten2voigt
+                    # f = 2.0 if kind == 'strain' else 1.0
+                    StrainVoigt = ten2voigt(Strain, 2.)
                     StressVoigt = Dtan @ StrainVoigt
                     BN, BG = getBmatrices(Shpd, F)
                 
@@ -56,7 +69,10 @@ def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
                     Residual[IDOF] -= FAC * (BN.T @ StressVoigt)
                     
                     # Convert stress to tensor form
-                    Stress = voigt2ten(StressVoigt, 'stress')
+                    
+                    # # ten2voigt
+                    # f = 2.0 if kind == 'strain' else 1.0
+                    Stress = voigt2ten(StressVoigt, 1.)
                     
                     # Build SHEAD (block diagonal stress tensor)
                     SHEAD = np.zeros((9, 9))
@@ -72,6 +88,7 @@ def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
                     
     return Residual, GKF
 
+@numba.jit(nopython=True)
 def getBmatrices(Shpd, F):
     """
     Compute BN (strain-displacement) and BG (geometric) matrices
@@ -129,7 +146,7 @@ def getBmatrices(Shpd, F):
 
     return BN, BG
 
-
+@numba.jit(nopython=True)
 def GetShapeFunction(XI, Elxy):
     XNode = np.array([
         [-1, 1, 1, -1, -1, 1, 1, -1],

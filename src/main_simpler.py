@@ -30,12 +30,10 @@ FEMod = octave.ModelInformation_Beam()
 
 # --- Material ---
 E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
-Dtan= octave.getIsotropicCelas(E,nu);
+Dtan= get_isotropic_celas(E, nu);
 
 # --- Contact ---
-# contactPairs = octave.InitializeContactPairs(FEMod, nout = 1)
 contactPairs = InitializeContactPairs(FEMod)
-# contactPairs = ensure_list(contactPairs) # expected to work , but useless
 
 NodeNum, Dim = FEMod.Nodes.shape
 AllDOF = Dim * NodeNum
@@ -44,10 +42,11 @@ FixDOF = Dim * (FEMod.Cons[:, 0] - 1) + FEMod.Cons[:, 1] - 1
 FixDOF = FixDOF.astype(int)
 FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF)
 
-Disp=np.zeros((AllDOF,1), order = 'F');
+Disp=np.zeros(AllDOF);
 
 start = timer()
 # --- Main loop ---
+Eles_ = FEMod.Eles.astype(np.int64)-1
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
     Dt = TimeList[i + 1] - TimeList[i]
@@ -61,27 +60,14 @@ for i in range(Nit - 1):
     for k in range(NNRmax):
         # Global stiffness and residual
         GKF = sp.lil_matrix((AllDOF, AllDOF))
-        # GKF = np.zeros((AllDOF, AllDOF))
         
-        Residual = np.zeros((AllDOF,1), order = 'F')
-        ExtFVect = np.zeros((AllDOF,1), order = 'F')
+        Residual = np.zeros(AllDOF)
+        ExtFVect = np.zeros(AllDOF)
         NCon = FEMod.Cons.shape[0]
 
         # Internal force and tangent stiffness
-        Residual = Residual.flatten()
-        Disp = Disp.flatten()
-        Residual, GKF = GetStiffnessAndForce(FEMod.Nodes, FEMod.Eles.astype('int'), Disp, Residual, GKF, Dtan)
-        Residual = Residual.reshape((-1,1), order = 'F') 
-        Disp = Disp.reshape((-1,1), order = 'F') 
+        Residual, GKF = GetStiffnessAndForce(FEMod.Nodes, Eles_, Disp, Residual, GKF, Dtan)
     
-        # Contact update ( Only Frictionless case working)
-        # contactPairs, GKF, Residual = octave.DetermineContactState(
-        #     FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp, nout = 3)
-        # flattenising_struct(contactPairs)
-        
-        # contactPairs, GKF, Residual = DetermineContactState(
-        #     FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
-        
         contactPairs, GKF, Residual = DetermineFrictionlessContactState(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
@@ -89,17 +75,17 @@ for i in range(Nit - 1):
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:
             LOC = Dim * (FEMod.ExtF[:, 0].astype(int) - 1) + FEMod.ExtF[:, 1].astype(int) - 1  # convert to 0-based
-            ExtFVect[LOC,0] += LoadFac * FEMod.ExtF[:, 2]
-        Residual[:,0] += ExtFVect[:,0]
+            ExtFVect[LOC] += LoadFac * FEMod.ExtF[:, 2]
+        Residual += ExtFVect
 
         # Displacement boundary conditions
         GKF[FixDOF, :] = 0.0
         for i, dof in enumerate(FixDOF):
             GKF[dof, dof] = 1.0
-        Residual[FixDOF, 0] = 0.0
+        Residual[FixDOF] = 0.0
 
         if k == 0:
-            Residual[FixDOF, 0] = SDisp.flatten()
+            Residual[FixDOF] = SDisp.flatten()
         else:
             normRes = np.linalg.norm(Residual)
             print(f"{k+1:27d} {normRes:14.5e}")
@@ -112,7 +98,7 @@ for i in range(Nit - 1):
 
         # Newton–Raphson update
         IncreDisp = spla.spsolve(GKF.tocsr(), Residual)
-        Disp[:,0] += IncreDisp.flatten()
+        Disp += IncreDisp
         
     print("norm disp = ", np.linalg.norm(Disp))
 

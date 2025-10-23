@@ -6,38 +6,20 @@ Created on Thu Oct  9 10:35:06 2025
 @author: frocha
 """
 import numpy as np
+import numba
+# from utils import *
+from fem_lib import get_dofs_given_nodes_ids
 
-def get_isotropic_celas(E, nu):
-    """
-    Return 6x6 isotropic elasticity (tangent) matrix for 3D elasticity.
-    
-    Parameters
-    ----------
-    E : float
-        Young's modulus
-    nu : float
-        Poisson's ratio
-    
-    Returns
-    -------
-    Dtan : (6,6) ndarray
-        Constitutive matrix in Voigt notation
-    """
-    fac = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
-    
-    Dtan = np.array([
-        [1,           nu / (1 - nu), nu / (1 - nu), 0, 0, 0],
-        [nu / (1 - nu), 1,           nu / (1 - nu), 0, 0, 0],
-        [nu / (1 - nu), nu / (1 - nu), 1,           0, 0, 0],
-        [0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0, 0],
-        [0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0],
-        [0, 0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu))]
-    ], dtype=float)
-    
-    Dtan *= fac
-    return Dtan
+
+FACE_INDEX = np.array([[3, 2, 1, 0], 
+                       [5, 6, 7, 4],
+                       [1, 5, 4, 0],
+                       [1, 2, 6, 5],
+                       [2, 3, 7, 6],
+                       [4, 7, 3, 0]], dtype=np.int64)
 
 # Convert a 3D vector to its skew-symmetric matrix (cross-product matrix).
+@numba.jit(nopython=True)
 def TransVect2SkewSym(Vect):
     Vect = np.asarray(Vect).flatten()
     SkewSym = np.array([[0, -Vect[2], Vect[1]],
@@ -45,12 +27,9 @@ def TransVect2SkewSym(Vect):
                         [-Vect[1], Vect[0], 0]])
     return SkewSym
 
-def flattenising_struct(s):
-    for k in s.keys(): 
-        if(s[k].shape[0] == 1 and s[k].shape[1]!=1):
-            s[k] = s[k].flatten()
-            
 
+# get N1 and N2 as dN
+@numba.jit(nopython=True)
 def get_surface_geometry(N, N1, N2, SurfXYZ):
     """
     Compute surface geometry quantities from shape functions and nodal coordinates.
@@ -73,25 +52,25 @@ def get_surface_geometry(N, N1, N2, SurfXYZ):
     x : (3,) array
         Current surface point coordinates.
     """
-    x   = np.sum(N[:, None]  * SurfXYZ, axis=0)
-    N1X = np.sum(N1[:, None] * SurfXYZ, axis=0)
-    N2X = np.sum(N2[:, None] * SurfXYZ, axis=0)
+    x   = SurfXYZ.T@N
+    NTx = np.vstack((N1,N2))@SurfXYZ # (2,4)x(4,3) --> (2,3)
 
-    n = np.cross(N1X, N2X)
+    n = np.cross(NTx[0,:], NTx[1,:])
     J = np.linalg.norm(n)
     n = n / J  # normalize
 
-    return n, J, N1X, N2X, x
+    return n, J, NTx[0,:], NTx[1,:], x
 
 
-# === Obtain surface node numbers ===
+
+@numba.jit(nopython=True)
 def GetSurfaceNode(elementLE, SurfSign):
     """
     GetSurfaceNode - Return the node indices defining a surface of a hexahedral element.
 
     Parameters
     ----------
-    elementLE : array_like
+    elementLE : array_like (expected to be a 1D NumPy array)
         1D array of 8 node indices for the element.
     SurfSign : int
         Surface identifier (1–6).
@@ -101,25 +80,11 @@ def GetSurfaceNode(elementLE, SurfSign):
     SurfNode : ndarray
         Array of 4 node indices for the specified face (1D, int).
     """
-    if SurfSign == 1:
-        SurfNode = elementLE[[3, 2, 1, 0]]   # face 1
-    elif SurfSign == 2:
-        SurfNode = elementLE[[5, 6, 7, 4]]   # face 2
-    elif SurfSign == 3:
-        SurfNode = elementLE[[1, 5, 4, 0]]   # face 3
-    elif SurfSign == 4:
-        SurfNode = elementLE[[1, 2, 6, 5]]   # face 4
-    elif SurfSign == 5:
-        SurfNode = elementLE[[2, 3, 7, 6]]   # face 5
-    elif SurfSign == 6:
-        SurfNode = elementLE[[4, 7, 3, 0]]   # face 6
-    else:
-        raise ValueError("SurfSign must be between 1 and 6.")
-    return SurfNode - 1 # matlab -> python index
+
+    return elementLE[FACE_INDEX[SurfSign-1]].astype(np.int64) - 1
 
 
-
-# === Surface shape function and derivatives ===
+@numba.jit(nopython=True)
 def GetSurfaceShapeFunction(r, s):
     """
     GetSurfaceShapeFunction - Compute shape functions and their derivatives
@@ -134,31 +99,22 @@ def GetSurfaceShapeFunction(r, s):
     -------
     N : ndarray
         Shape function values (4,)
-    N1 : ndarray
-        Derivative with respect to r (4,)
-    N2 : ndarray
-        Derivative with respect to s (4,)
+    dN : ndarray
+        Derivative with respect to rs (2,4)
     """
-    N  = np.array([
-        0.25 * (r - 1) * (s - 1),
-        -0.25 * (r + 1) * (s - 1),
-        0.25 * (r + 1) * (s + 1),
-        -0.25 * (r - 1) * (s + 1)
-    ])
-    N1 = np.array([
-        0.25 * (s - 1),
-        -0.25 * (s - 1),
-        0.25 * (s + 1),
-        -0.25 * (s + 1)
-    ])
-    N2 = np.array([
-        0.25 * (r - 1),
-        -0.25 * (r + 1),
-        0.25 * (r + 1),
-        -0.25 * (r - 1)
-    ])
-    return N, N1, N2
+    
+    N  = 0.25*np.array([(r - 1) * (s - 1), -(r + 1) * (s - 1), (r + 1) * (s + 1), -(r - 1) * (s + 1)])
+    dN = 0.25*np.array([[(s - 1),-(s - 1), (s + 1), -(s + 1)], 
+                        [(r - 1), -(r + 1), (r + 1), -(r - 1)]])
+    
+    return N, dN[0,:], dN[1,:]
 
+@numba.jit(nopython=True)
+def get_deformed_position(nodes_ids, nodes, disp):
+    # Build DOF list
+    DOFs = get_dofs_given_nodes_ids(nodes_ids)
+    # return deformed coordinates
+    return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
 
 # === Obtain surface node coordinates and DOFs ===
 def GetSurfaceNodeLocation(FEMod, Disp, Surf):
@@ -190,14 +146,49 @@ def GetSurfaceNodeLocation(FEMod, Disp, Surf):
     # Get surface nodes (convert to 0-based indices)
     element_nodes = np.asarray(FEMod.Eles[element_index, :], dtype=int)
     SurfNode = GetSurfaceNode(element_nodes, SurfSign)
-
-    # Build DOF indices (3 per node)
-    SurfNodeDOF = np.zeros(len(SurfNode) * 3, dtype=int)
-    for m, node in enumerate(SurfNode):
-        SurfNodeDOF[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # node is already in python convention
+    SurfNodeDOF = get_dofs_given_nodes_ids(SurfNode)
 
     # Get nodal displacements and coordinates
-    SurfNodeDis = Disp[SurfNodeDOF].reshape(3, len(SurfNode), order = 'F').T
+    SurfNodeDis = Disp[SurfNodeDOF].reshape((len(SurfNode),3))
     SurfNodeXYZ = FEMod.Nodes[SurfNode, :] + SurfNodeDis
 
     return SurfNodeXYZ, SurfNodeDOF
+
+
+def get_isotropic_celas(E, nu):
+    """
+    Return 6x6 isotropic elasticity (tangent) matrix for 3D elasticity.
+    
+    Parameters
+    ----------
+    E : float
+        Young's modulus
+    nu : float
+        Poisson's ratio
+    
+    Returns
+    -------
+    Dtan : (6,6) ndarray
+        Constitutive matrix in Voigt notation
+    """
+    fac = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
+    
+    Dtan = np.array([
+        [1,           nu / (1 - nu), nu / (1 - nu), 0, 0, 0],
+        [nu / (1 - nu), 1,           nu / (1 - nu), 0, 0, 0],
+        [nu / (1 - nu), nu / (1 - nu), 1,           0, 0, 0],
+        [0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0, 0],
+        [0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu)), 0],
+        [0, 0, 0, 0, 0, (1 - 2*nu) / (2 * (1 - nu))]
+    ], dtype=float)
+    
+    Dtan *= fac
+    return Dtan
+
+# def flattenising_struct(s):
+#     for k in s.keys(): 
+#         if(s[k].shape[0] == 1 and s[k].shape[1]!=1):
+#             s[k] = s[k].flatten()
+            
+
+
