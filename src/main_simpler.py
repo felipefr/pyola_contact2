@@ -118,6 +118,6 @@ for i in range(Nit - 1):
 
 end = timer()
 print("time : ", end-start)
-UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
-octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
+# UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
+# octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
 

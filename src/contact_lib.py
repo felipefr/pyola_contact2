@@ -9,6 +9,7 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
+import optimised_functions as opt
 
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -131,36 +132,28 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
     ContactSearch - conservative translation from MATLAB
     (GetContactPointbyRayTracing still in Octave, 1-based safe)
     """
-
+    
     nPairs = ContactPairs.SlaveSurf.shape[1]
+    
+    Eles_ = FEMod.Eles.astype(dtype=np.int64) - 1
+    MasterSurf_ = FEMod.MasterSurf.astype(np.int64) - 1
+    SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
 
     for i in range(nPairs):
-
         # --- Get current slave surface geometry ---
-        SlaveSurfNodeXYZ, _ = GetSurfaceNodeLocation(FEMod, Disp, ContactPairs.SlaveSurf[:, i])
+        SlaveSurfNode = opt.GetSurfaceNode(Eles_[SlaveSurf[0,i], :], SlaveSurf[1,i])
+        SlaveSurfNodeXYZ = opt.get_deformed_position(SlaveSurfNode, FEMod.Nodes, Disp)
 
         # Current integration point coordinates (MATLAB -> Python: subtract 1)
         ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
-        CurIP = IntegralPoint[ip_idx, :]
-        N, N1, N2 = GetSurfaceShapeFunction(float(CurIP[0]), float(CurIP[1]))
+        CurIP = IntegralPoint[ip_idx, :].astype(np.float64)
+        
+        N, dN = opt.GetSurfaceShapeFunction(CurIP)
+        SlavePoint = SlaveSurfNodeXYZ.T@N
+        SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
 
-        # Compute slave surface point and tangents
-        SlavePoint = np.sum(N[:, None] * SlaveSurfNodeXYZ, axis=0).reshape((3,1)) # this is to match octave convention
-        N1X = np.sum(N1[:, None] * SlaveSurfNodeXYZ, axis=0)
-        N2X = np.sum(N2[:, None] * SlaveSurfNodeXYZ, axis=0)
-        SlavePointTan = np.column_stack((N1X, N2X))
-
-        # --- Find nearest master surface via ray tracing (still in Octave) ---
-        rr2, ss2, MasterEle2, MasterSign2, gg2, Exist2 = octave.GetContactPointbyRayTracing(
-            FEMod, Disp, SlavePoint, SlavePointTan, nout = 6)
-
-        rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
-            FEMod, Disp, SlavePoint, SlavePointTan)
-
-        # # --- Update contact pair information ---
-        if(np.abs(gg2 - gg)>1e-8):
-            print(i, gg, gg2, Exist, Exist2, MasterEle, MasterEle2)
-            
+        rr, ss, MasterEle, MasterSign, gg, Exist = opt.GetContactPointbyRayTracing(
+            Eles_, FEMod.Nodes, MasterSurf_, Disp, SlavePoint, SlavePointTan)
             
         if Exist == 1:
             ContactPairs.CurMasterSurf[:, i] = np.array([MasterEle, MasterSign])
@@ -176,144 +169,6 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
             ContactPairs.CurContactState[i] = 0
 
     return ContactPairs
-
-
-# Todo1: node to python convention
-# Todo2: eliminate repeated conde : "Build DOFs"
-# Todo3: automate get deformed coordinates
-# Todo4: Find the nearest node can be improved
-def GetContactPointbyRayTracing(FEMod, Disp, SlavePoint, SlavePointTan):
-    """
-    Obtain master surface contact point by ray tracing.
-    FEMod numbering follows MATLAB (1-based)
-    """
-
-    Tol = 1e-4
-    Exist = -1
-    MinDis = 1e8
-    MinGrow = 0
-    Ming = -1e3
-    MinMasterPoint = None
-
-    nMasterSurf = FEMod.MasterSurf.shape[1]
-    AllMasterNode = np.zeros((nMasterSurf, 4), dtype=int)
-
-    # --- Find node closest to integration point from slave surface ---
-    for i in range(nMasterSurf):
-        # MATLAB element index is 1-based
-        MasterSurfNode = GetSurfaceNode(FEMod.Eles[int(FEMod.MasterSurf[0, i]) - 1, :].astype('int'),
-                                        int(FEMod.MasterSurf[1, i]))
-        AllMasterNode[i, :] = MasterSurfNode
-
-        # Build DOF list
-        MasterSurfDOF = np.zeros(len(MasterSurfNode) * 3, dtype=int)
-        for m, node in enumerate(MasterSurfNode):
-            MasterSurfDOF[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
-
-        # Current deformed coordinates
-        MasterSurfDis = Disp[MasterSurfDOF].reshape(3, len(MasterSurfNode), order = 'F').T
-        MasterSurfXYZ = FEMod.Nodes[MasterSurfNode, :] + MasterSurfDis  
-
-        # Find nearest node to slave point
-        for j in range(4):
-            ll = MasterSurfXYZ[j, :] - SlavePoint.flatten()
-            Distance = np.linalg.norm(ll)
-            if Distance < MinDis:
-                MinDis = Distance
-                MinMasterPoint = MasterSurfNode[j]
-    
-    
-    # --- Determine candidate master surfaces ---
-    AllMinMasterSurfNum = np.where(AllMasterNode == MinMasterPoint)[0]
-    ContactCandidate = np.zeros((len(AllMinMasterSurfNum), 8))
-    ContactCandidate[:, 4] = 1e7  # MATLAB column 5
-    
-    # --- Loop over candidate master surfaces ---
-    for idx, surf_idx in enumerate(AllMinMasterSurfNum):
-        MasterSurfNode = AllMasterNode[surf_idx, :]
-
-        # Build DOFs
-        MasterSurfDOF = np.zeros(len(MasterSurfNode) * 3, dtype=int)
-        for m, node in enumerate(MasterSurfNode):
-            MasterSurfDOF[3*m:3*m+3] = np.arange(3*node, 3*(node+1)) # python convention
-
-        # Deformed coordinates
-        MasterSurfDis = Disp[MasterSurfDOF].reshape(3, len(MasterSurfNode), order = 'F').T
-        MasterSurfXYZ = FEMod.Nodes[MasterSurfNode, :] + MasterSurfDis
-
-        # Ray-tracing Newton-Raphson iteration
-        r = 0.0
-        s = 0.0
-        for j in range(int(1e8)):
-            N, N1, N2 = GetSurfaceShapeFunction(r, s)
-
-            NX = np.sum(N[:, None] * MasterSurfXYZ, axis=0)
-            N1X = np.sum(N1[:, None] * MasterSurfXYZ, axis=0)
-            N2X = np.sum(N2[:, None] * MasterSurfXYZ, axis=0)
-
-            # felipe: flattening slavepoint
-            fai = np.array([
-                np.dot(SlavePoint.flatten() - NX, SlavePointTan[:, 0]),
-                np.dot(SlavePoint.flatten() - NX, SlavePointTan[:, 1])
-            ])
-
-            if j == 500:
-                r = 1e5
-                Exist = -1
-                break
-
-            if np.max(np.abs(fai)) < Tol:
-                break
-
-            k11 = np.dot(N1X, SlavePointTan[:, 0])
-            k12 = np.dot(N2X, SlavePointTan[:, 0])
-            k21 = np.dot(N1X, SlavePointTan[:, 1])
-            k22 = np.dot(N2X, SlavePointTan[:, 1])
-
-            KT = np.array([[k11, k12], [k21, k22]])
-            drs = np.linalg.solve(KT, fai)
-
-            r += drs[0]
-            s += drs[1]
-
-        # --- Save nearest RayTracing point ---
-        if abs(r) <= 1.01 and abs(s) <= 1.01:
-            v = np.cross(SlavePointTan[:, 0], SlavePointTan[:, 1])
-            v /= np.linalg.norm(v)
-            
-            # felipe: flattening slavepoint
-            g = np.dot(NX - SlavePoint.flatten(), v)
-
-            ContactCandidate[idx, 0] = FEMod.MasterSurf[0, surf_idx]
-            ContactCandidate[idx, 1] = FEMod.MasterSurf[1, surf_idx]
-            ContactCandidate[idx, 2:5] = np.array([r, s, g])
-            ContactCandidate[idx, 5:8] = v
-
-            if Exist <= 0:
-                if g >= 0 and abs(Ming) > abs(g):
-                    Exist = 0; MinGrow = idx; Ming = g
-                elif g < 0:
-                    Exist = 1; MinGrow = idx; Ming = g
-            elif Exist == 1:
-                if g < 0 and abs(Ming) > abs(g):
-                    Exist = 1; MinGrow = idx; Ming = g
-
-    # --- Final contact outputs ---
-    if Exist == 0 or Exist == 1:
-        MasterEle = ContactCandidate[MinGrow, 0]
-        MasterSign = ContactCandidate[MinGrow, 1]
-        rr = ContactCandidate[MinGrow, 2]
-        ss = ContactCandidate[MinGrow, 3]
-        gg = ContactCandidate[MinGrow, 4]
-    else:
-        MasterEle = 1e10
-        MasterSign = 1e10
-        rr = 1e10
-        ss = 1e10
-        gg = 1e10
-
-    return rr, ss, MasterEle, MasterSign, gg, Exist
-
 
 
 
