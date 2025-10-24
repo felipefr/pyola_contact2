@@ -46,13 +46,18 @@ Disp=np.zeros(AllDOF);
 
 start = timer()
 # --- Main loop ---
+# FEMod.cells = FEMod.Eles.astype(np.int64)-1
+# FEMod.coords = FEMod.Nodes.astype(np.float64)
+# FEMod.dest_surf = FEMod.SlaveSurf.T.astype(np.int64) - 1
+# FEMod.src_surf = FEMod.MasterSurf.T.astype(np.int64) - 1
+
+
 Eles_ = FEMod.Eles.astype(np.int64)-1
-# FEMod.Eles = FEMod.Eles.astype(np.int64)-1
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
     Dt = TimeList[i + 1] - TimeList[i]
     LoadFac = Time
-    SDisp = Dt * FEMod.Cons[:, 2]
+    SDisp = Dt * FEMod.Cons[:, 2]   
     PreDisp = Disp.copy()
     normRes = 9999.9
 

@@ -28,6 +28,7 @@ FixDOF=Dim*(FEMod.Cons(:,1)-1)+FEMod.Cons(:,2);
 FreeDOF=setdiff(1:AllDOF,FixDOF); % difference (set sense)
 Disp=zeros(AllDOF,1);
 
+tic 
 % Main loop
 for i = 1 : (Nit-1)	
     Time = TimeList(i+1);
@@ -87,6 +88,7 @@ for i = 1 : (Nit-1)
     fprintf("norm displacement = %10.5f \n" , norm(Disp));
 end
 
+toc 
 % Plotting
 
 % Plot Displacement magnitude
