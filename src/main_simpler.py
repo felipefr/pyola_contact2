@@ -16,7 +16,7 @@ from utils import *
 from timeit import default_timer as timer
 
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
-octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
+octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
 
 # --- Parameters ---
 Tmax = 0.1
@@ -27,6 +27,13 @@ TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
 FEMod = octave.ModelInformation_Beam()
+FEMod.cells = FEMod.Eles.astype(np.int64)-1
+FEMod.X = FEMod.Nodes.astype(np.float64)
+FEMod.Cons = FEMod.Cons.astype(np.int64)
+del FEMod.Nodes
+del FEMod.Eles
+FEMod.SlaveSurf = FEMod.SlaveSurf.astype(np.int64)
+FEMod.MasterSurf = FEMod.MasterSurf.astype(np.int64)
 
 # --- Material ---
 E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
@@ -35,24 +42,17 @@ Dtan= get_isotropic_celas(E, nu);
 # --- Contact ---
 contactPairs = InitializeContactPairs(FEMod)
 
-NodeNum, Dim = FEMod.Nodes.shape
+NodeNum, Dim = FEMod.X.shape
 AllDOF = Dim * NodeNum
 
 FixDOF = Dim * (FEMod.Cons[:, 0] - 1) + FEMod.Cons[:, 1] - 1 
-FixDOF = FixDOF.astype(int)
 FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF)
 
-Disp=np.zeros(AllDOF);
+Disp=np.zeros(AllDOF, dtype = np.float64);
 
 start = timer()
 # --- Main loop ---
-# FEMod.cells = FEMod.Eles.astype(np.int64)-1
-# FEMod.coords = FEMod.Nodes.astype(np.float64)
-# FEMod.dest_surf = FEMod.SlaveSurf.T.astype(np.int64) - 1
-# FEMod.src_surf = FEMod.MasterSurf.T.astype(np.int64) - 1
 
-
-Eles_ = FEMod.Eles.astype(np.int64)-1
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
     Dt = TimeList[i + 1] - TimeList[i]
@@ -65,14 +65,14 @@ for i in range(Nit - 1):
 
     for k in range(NNRmax):
         # Global stiffness and residual
-        GKF = sp.lil_matrix((AllDOF, AllDOF))
+        GKF = sp.lil_matrix((AllDOF, AllDOF), dtype = np.float64)
         
-        Residual = np.zeros(AllDOF)
-        ExtFVect = np.zeros(AllDOF)
+        Residual = np.zeros(AllDOF, dtype = np.float64)
+        ExtFVect = np.zeros(AllDOF, dtype = np.float64)
         NCon = FEMod.Cons.shape[0]
 
         # Internal force and tangent stiffness
-        Residual, GKF = GetStiffnessAndForce(FEMod.Nodes, Eles_, Disp, Residual, GKF, Dtan)
+        Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
     
         contactPairs, GKF, Residual = DetermineFrictionlessContactState(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
@@ -111,5 +111,5 @@ for i in range(Nit - 1):
 end = timer()
 print("time : ", end-start)
 # UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
-# octave.PlotStructuralContours(FEMod.Nodes,FEMod.Eles,Disp,UM.reshape((-1,1)))
+# octave.PlotStructuralContours(FEMod.X,FEMod.cells,Disp,UM.reshape((-1,1)))
 

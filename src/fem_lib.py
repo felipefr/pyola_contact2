@@ -14,10 +14,10 @@ import numba
 from utils import *
 
 # @numba.jit(nopython=True)
-def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):    
-    for IE in range(Eles.shape[0]):
-        Elxy = Nodes[Eles[IE, :], :]  # zero-based
-        IDOF = get_dofs_given_nodes_ids(Eles[IE, :])
+def GetStiffnessAndForce(X, cells, Disp, Residual, GKF, Dtan):    
+    for IE in range(cells.shape[0]):
+        Elxy = X[cells[IE, :], :]  # zero-based
+        IDOF = get_dofs_given_nodes_ids(cells[IE, :])
         EleDisp = Disp[IDOF].reshape((8,3)).T # before was fortran order
 
         ResL, GKL = GetStiffnessAndForceElemental(Elxy, EleDisp, Dtan)
@@ -28,7 +28,7 @@ def GetStiffnessAndForce(Nodes, Eles, Disp, Residual, GKF, Dtan):
 
 
 @numba.jit(nopython=True)
-def GetStiffnessAndForceElemental(NodesL, DispL, Dtan):
+def GetStiffnessAndForceElemental(XL, DispL, Dtan):
     XG = np.array([-0.57735026918963, 0.57735026918963])
     WGT = np.array([1.0, 1.0])
     
@@ -38,7 +38,7 @@ def GetStiffnessAndForceElemental(NodesL, DispL, Dtan):
         for LY in range(2):
             for LZ in range(2):
                 E1, E2, E3 = XG[LX], XG[LY], XG[LZ]
-                Shpd, Det = GetShapeFunction([E1, E2, E3], NodesL)
+                Shpd, Det = GetShapeFunction([E1, E2, E3], XL)
                 FAC = WGT[LX] * WGT[LY] * WGT[LZ] * Det                
                 
                 F = DispL @ Shpd.T + np.eye(3)
