@@ -13,6 +13,28 @@ import matplotlib.pyplot as plt
 import numba
 from utils import *
 
+
+def modify_FEMod(FEMod):
+    FEMod.cells = FEMod.Eles.astype(np.int64)-1
+    FEMod.X = FEMod.Nodes.astype(np.float64)
+    FEMod.Cons = FEMod.Cons.astype(np.int64)
+    del FEMod.Nodes
+    del FEMod.Eles
+    FEMod.SlaveSurf = FEMod.SlaveSurf.astype(np.int64)
+    FEMod.MasterSurf = FEMod.MasterSurf.astype(np.int64)
+    
+    nMasterSurf = FEMod.MasterSurf.shape[1]
+    FEMod.master_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[FEMod.MasterSurf[0, i] - 1, :], 
+                                                        FEMod.MasterSurf[1, i] - 1) 
+                                        for i in range(nMasterSurf)], dtype = np.int64) 
+
+    nSlaveSurf = FEMod.SlaveSurf.shape[1]
+    FEMod.slave_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[FEMod.SlaveSurf[0, i] - 1, :], 
+                                                        FEMod.SlaveSurf[1, i] - 1) 
+                                        for i in range(nSlaveSurf)], dtype = np.int64)   
+    
+    FEMod.master_surf_nodes = np.setdiff1d(FEMod.master_surf_cells.flatten(), [])
+
 # @numba.jit(nopython=True)
 def GetStiffnessAndForce(X, cells, Disp, Residual, GKF, Dtan):    
     for IE in range(cells.shape[0]):

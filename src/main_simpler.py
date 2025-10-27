@@ -27,13 +27,7 @@ TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
 FEMod = octave.ModelInformation_Beam()
-FEMod.cells = FEMod.Eles.astype(np.int64)-1
-FEMod.X = FEMod.Nodes.astype(np.float64)
-FEMod.Cons = FEMod.Cons.astype(np.int64)
-del FEMod.Nodes
-del FEMod.Eles
-FEMod.SlaveSurf = FEMod.SlaveSurf.astype(np.int64)
-FEMod.MasterSurf = FEMod.MasterSurf.astype(np.int64)
+modify_FEMod(FEMod)
 
 # --- Material ---
 E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];

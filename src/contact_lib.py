@@ -9,6 +9,7 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
+import optimised_functions as opt
 
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -149,7 +150,7 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
         SlavePoint = SlaveSurfNodeXYZ.T@N
         SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
 
-        rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
+        rr, ss, MasterEle, MasterSign, gg, Exist = opt.GetContactPointbyRayTracing(
             FEMod.cells, FEMod.X, MasterSurf_, Disp, SlavePoint, SlavePointTan)
             
         if Exist == 1:
@@ -302,12 +303,11 @@ def DetermineFrictionlessContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Res
         [-gp, -gp],
         [ gp, -gp],
         [ gp,  gp],
-        [-gp,  gp]
-    ])
+        [-gp,  gp]], dtype = np.float64)
 
     # --- Contact search and friction factor
 
-    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
+    ContactPairs = opt.ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
     # support both dict-like and attribute-style FEMod
     FricFac = FEMod['FricFac'] if isinstance(FEMod, dict) else FEMod.FricFac
 
@@ -456,6 +456,7 @@ def newton_raphson_raytracing(SlavePoint, SlavePointTan, MasterSurfXYZ, Exist, T
 # Todo2: eliminate repeated conde : "Build DOFs"
 # Todo3: automate get deformed coordinates
 # Todo4: Find the nearest node can be improved
+
 def GetContactPointbyRayTracing(Eles, Nodes, MasterSurf, Disp, SlavePoint, SlavePointTan):
     """
     Obtain master surface contact point by ray tracing.
