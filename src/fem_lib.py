@@ -34,6 +34,11 @@ def modify_FEMod(FEMod):
                                         for i in range(nSlaveSurf)], dtype = np.int64)   
     
     FEMod.master_surf_nodes = np.setdiff1d(FEMod.master_surf_cells.flatten(), [])
+    
+    gp = 1.0 / np.sqrt(3.0)
+    FEMod.SurfIPs = np.array([ [-gp, -gp], [ gp, -gp], [ gp,  gp], [-gp,  gp]], dtype = np.float64) 
+    
+    FEMod.ShpfSurf = [ GetSurfaceShapeFunction(ip) for ip in FEMod.SurfIPs ]
 
 # @numba.jit(nopython=True)
 def GetStiffnessAndForce(X, cells, Disp, Residual, GKF, Dtan):    

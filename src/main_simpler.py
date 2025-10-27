@@ -16,7 +16,7 @@ from utils import *
 from timeit import default_timer as timer
 
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
-octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
+octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
 
 # --- Parameters ---
 Tmax = 0.1

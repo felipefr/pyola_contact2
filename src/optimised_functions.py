@@ -24,26 +24,28 @@ def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
     SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
 
     # MasterSurfXYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in FEMod.master_surf_cells]).reshape((-1,3))
-    MasterSurfXYZ = get_deformed_position(FEMod.master_surf_nodes, FEMod.X, Disp)
+    MasterSurfNodeXYZ = get_deformed_position(FEMod.master_surf_nodes, FEMod.X, Disp)
     # tree = KDTree(MasterSurfXYZ)
     # MasterSurfXYZ = None 
     tree = None
-                
-
-    for i in range(FEMod.slave_surf_cells.shape[0]):
-        # --- Get current slave surface geometry ---
-        # SlaveSurfNode = GetSurfaceNode(FEMod.cells[SlaveSurf[0,i], :], SlaveSurf[1,i])
-        SlaveSurfNodeXYZ = get_deformed_position(FEMod.slave_surf_cells[i,:], FEMod.X, Disp)
-        
-        for j in range(4):
-            N, dN = GetSurfaceShapeFunction(IntegralPoint[j])
-            SlavePoint = SlaveSurfNodeXYZ.T@N
-            SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
     
-            rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
-                FEMod.cells, FEMod.X, FEMod.master_surf_cells, FEMod.master_surf_nodes, MasterSurf_, tree, Disp, SlavePoint, SlavePointTan)
-            
+    SlaveSurfNodeXYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in FEMod.slave_surf_cells]) # 120x4x3
+    SlavePoint = np.empty((nPairs, 3))
+    SlavePointTan = np.empty((nPairs, 3, 2)) # not the best convention
+    
+    for i in range(FEMod.slave_surf_cells.shape[0]):
+        for j in range(4):
             ipair = 4*i + j
+            SlavePoint[ipair, :] = SlaveSurfNodeXYZ[i].T@FEMod.ShpfSurf[j][0]
+            SlavePointTan[ipair, :, :] = (FEMod.ShpfSurf[j][1] @ SlaveSurfNodeXYZ[i]).T
+
+    for i in range(FEMod.slave_surf_cells.shape[0]):        
+        for j in range(4):
+            ipair = 4*i + j
+            rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
+                FEMod.cells, FEMod.X, FEMod.master_surf_cells, FEMod.master_surf_nodes, MasterSurf_, tree, Disp, SlavePoint[ipair,:], SlavePointTan[ipair,:,:])
+            
+            
             if Exist == 1:
                 ContactPairs.CurMasterSurf[:, ipair] = np.array([MasterEle, MasterSign])
                 ContactPairs.rc[ipair] = rr
