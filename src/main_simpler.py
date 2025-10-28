@@ -6,6 +6,9 @@ Created on Wed Oct  8 17:12:15 2025
 @author: frocha
 """
 
+import numba
+numba.set_num_threads(40)
+    
 from oct2py import octave
 import numpy as np
 import scipy.sparse as sp
@@ -14,6 +17,8 @@ from fem_lib import *
 from contact_lib import *
 from utils import *
 from timeit import default_timer as timer
+import optimised_functions as opt
+
 
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
@@ -47,6 +52,8 @@ Disp=np.zeros(AllDOF, dtype = np.float64);
 start = timer()
 # --- Main loop ---
 
+ExtFVect = np.zeros(AllDOF, dtype = np.float64)
+Residual = np.zeros(AllDOF, dtype = np.float64)
 for i in range(Nit - 1):
     Time = TimeList[i + 1]
     Dt = TimeList[i + 1] - TimeList[i]
@@ -59,14 +66,13 @@ for i in range(Nit - 1):
 
     for k in range(NNRmax):
         # Global stiffness and residual
-        GKF = sp.lil_matrix((AllDOF, AllDOF), dtype = np.float64)
-        
-        Residual = np.zeros(AllDOF, dtype = np.float64)
-        ExtFVect = np.zeros(AllDOF, dtype = np.float64)
+        ExtFVect.fill(0.0)
+
         NCon = FEMod.Cons.shape[0]
 
         # Internal force and tangent stiffness
-        Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
+        # Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
+        Residual, GKF = opt.GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Dtan, Residual)
     
         contactPairs, GKF, Residual = DetermineFrictionlessContactState(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
@@ -80,6 +86,7 @@ for i in range(Nit - 1):
 
         # Displacement boundary conditions
         GKF[FixDOF, :] = 0.0
+        # GKF.data[GKF.indptr[FixDOF[0]]:GKF.indptr[FixDOF[-1]+1]] = 0.0
         for i, dof in enumerate(FixDOF):
             GKF[dof, dof] = 1.0
         Residual[FixDOF] = 0.0
@@ -95,7 +102,7 @@ for i in range(Nit - 1):
             # contactPairs = octave.updateContact(contactPairs, nout = 1)
             updateContact(contactPairs)
             break
-
+        
         # Newton–Raphson update
         IncreDisp = spla.spsolve(GKF.tocsr(), Residual)
         Disp += IncreDisp
@@ -104,6 +111,7 @@ for i in range(Nit - 1):
 
 end = timer()
 print("time : ", end-start)
+print("Using", numba.get_num_threads(), "threads")
 # UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
 # octave.PlotStructuralContours(FEMod.X,FEMod.cells,Disp,UM.reshape((-1,1)))
 

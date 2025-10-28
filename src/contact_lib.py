@@ -9,8 +9,9 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
-# import optimised_functions as opt
-import optimised_functions2 as opt2
+import optimised_functions as opt
+from ray_tracing import GetContactPointbyRayTracing
+from scipy.spatial import cKDTree
 
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -128,48 +129,55 @@ def InitializeContactPairs(FEMod):
 
     return ContactPairs
 
+
 def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
     """
     ContactSearch - conservative translation from MATLAB
     (GetContactPointbyRayTracing still in Octave, 1-based safe)
     """
     
+    method = "newton"
     nPairs = ContactPairs.SlaveSurf.shape[1]
-    MasterSurf_ = FEMod.MasterSurf - 1
     SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
+    
+    MasterSurfXYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in FEMod.master_surf_cells]).reshape((-1,4,3)) # redudant computations
+    MasterSurfNodeXYZ = get_deformed_position(FEMod.master_surf_nodes, FEMod.X, Disp) # redudant computations
+    tree = cKDTree(MasterSurfNodeXYZ)
+    
+    SlaveSurfNodeXYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in FEMod.slave_surf_cells]) # 120x4x3
+    SlavePoint = np.empty((nPairs, 3))
+    SlavePointFrame = np.empty((nPairs, 3, 3)) # (:, [normal, t1, t2], ndim) not the best convention
+    
+    for i in range(FEMod.slave_surf_cells.shape[0]):
+        for j in range(4):
+            ipair = 4*i + j
+            SlavePoint[ipair, :] = SlaveSurfNodeXYZ[i].T@FEMod.ShpfSurf[j][0]
+            SlavePointFrame[ipair, 1:3, :] = FEMod.ShpfSurf[j][1] @ SlaveSurfNodeXYZ[i]
+            SlavePointFrame[ipair, 0, :] = np.cross(SlavePointFrame[ipair, 1, :], SlavePointFrame[ipair, 2, :])
+            SlavePointFrame[ipair, 0, :] /= np.linalg.norm(SlavePointFrame[ipair, 0, :])
 
-    for i in range(nPairs):
-        # --- Get current slave surface geometry ---
-        SlaveSurfNode = GetSurfaceNode(FEMod.cells[SlaveSurf[0,i], :], SlaveSurf[1,i])
-        SlaveSurfNodeXYZ = get_deformed_position(SlaveSurfNode, FEMod.X, Disp)
 
-        # Current integration point coordinates (MATLAB -> Python: subtract 1)
-        ip_idx = ContactPairs.SlaveIntegralPoint[i] - 1
-        CurIP = IntegralPoint[ip_idx, :].astype(np.float64)
-        
-        N, dN = GetSurfaceShapeFunction(CurIP)
-        SlavePoint = SlaveSurfNodeXYZ.T@N
-        SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
-
-        rr, ss, MasterEle, MasterSign, gg, Exist = opt.GetContactPointbyRayTracing(
-            FEMod.cells, FEMod.X, MasterSurf_, Disp, SlavePoint, SlavePointTan)
+    for i in range(FEMod.slave_surf_cells.shape[0]):        
+        for j in range(4): # gauss point number
+            ipair = 4*i + j
+            rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
+                FEMod, Disp, SlavePoint[ipair,:], SlavePointFrame[ipair,:,:], MasterSurfXYZ, tree, method)
             
-        if Exist == 1:
-            ContactPairs.CurMasterSurf[:, i] = np.array([MasterEle, MasterSign])
-            ContactPairs.rc[i] = rr
-            ContactPairs.sc[i] = ss
-            ContactPairs.Cur_g[i] = gg
-        else:
-            # print("contact not found at ", i)
-            ContactPairs.CurMasterSurf[:, i] = 0 
-            ContactPairs.rc[i] = 0
-            ContactPairs.sc[i] = 0
-            ContactPairs.Cur_g[i] = 0
-            ContactPairs.CurContactState[i] = 0
+            
+            if Exist == 1:
+                ContactPairs.CurMasterSurf[:, ipair] = np.array([MasterEle, MasterSign])
+                ContactPairs.rc[ipair] = rr
+                ContactPairs.sc[ipair] = ss
+                ContactPairs.Cur_g[ipair] = gg
+            else:
+                # print("contact not found at ", i)
+                ContactPairs.CurMasterSurf[:, ipair] = 0 
+                ContactPairs.rc[ipair] = 0
+                ContactPairs.sc[ipair] = 0
+                ContactPairs.Cur_g[ipair] = 0
+                ContactPairs.CurContactState[ipair] = 0
 
     return ContactPairs
-
-
 
 
 def CalculateFrictionlessContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp, IntegralPoint):
@@ -308,7 +316,7 @@ def DetermineFrictionlessContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Res
 
     # --- Contact search and friction factor
 
-    ContactPairs = opt2.ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
+    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
     # support both dict-like and attribute-style FEMod
     FricFac = FEMod['FricFac'] if isinstance(FEMod, dict) else FEMod.FricFac
 
@@ -453,97 +461,45 @@ def newton_raphson_raytracing(SlavePoint, SlavePointTan, MasterSurfXYZ, Exist, T
 
     return rs, Exist
 
-# Todo1: node to python convention
-# Todo2: eliminate repeated conde : "Build DOFs"
-# Todo3: automate get deformed coordinates
-# Todo4: Find the nearest node can be improved
 
-def GetContactPointbyRayTracing(Eles, Nodes, MasterSurf, Disp, SlavePoint, SlavePointTan):
-    """
-    Obtain master surface contact point by ray tracing.
-    FEMod numbering follows MATLAB (1-based)
-    """
 
-    Tol = 1e-4
-    Exist = -1
-    MinDis = 1e8
-    MinGrow = 0
-    Ming = -1e3
-    MinMasterPoint = None
-
-    nMasterSurf = MasterSurf.shape[1]
-    AllMasterNode = np.zeros((nMasterSurf, 4), dtype = np.int64)
+# def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
+#     """
+#     ContactSearch - conservative translation from MATLAB
+#     (GetContactPointbyRayTracing still in Octave, 1-based safe)
+#     """
     
-    SlavePoint_ = SlavePoint.flatten().astype(np.float64)
-    
-    # --- Find node closest to integration point from slave surface ---
-    for i in range(nMasterSurf):
-        # MATLAB element index is 1-based
-        MasterSurfNode = GetSurfaceNode(Eles[MasterSurf[0, i], :],
-                                        MasterSurf[1, i])
-        AllMasterNode[i, :] = MasterSurfNode
+#     nPairs = ContactPairs.SlaveSurf.shape[1]
+#     MasterSurf_ = FEMod.MasterSurf - 1
+#     SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
 
-        MasterSurfXYZ = get_deformed_position(MasterSurfNode, Nodes, Disp)
-                
-        # Find nearest node to slave point
-        ll = MasterSurfXYZ - SlavePoint_  # Result is a (4, 3) array
-        Distances = np.linalg.norm(ll, axis=1) # Result is a (4,) array
-        min_idx = np.argmin(Distances)
-        current_min_distance = Distances[min_idx]
-        if current_min_distance < MinDis:
-            MinDis = current_min_distance
-            MinMasterPoint = MasterSurfNode[min_idx]
-    
-    
-    # --- Determine candidate master surfaces ---
-    AllMinMasterSurfNum = np.where(AllMasterNode == MinMasterPoint)[0]
-    ContactCandidate = np.zeros((AllMinMasterSurfNum.shape[0], 8))
-    ContactCandidate[:, 4] = 1e7  # MATLAB column 5
-    
-    # --- Loop over candidate master surfaces ---
-    for idx, surf_idx in enumerate(AllMinMasterSurfNum):
-        MasterSurfNode = AllMasterNode[surf_idx, :]        
-        MasterSurfXYZ = get_deformed_position(MasterSurfNode, Nodes, Disp)
+#     for i in range(nPairs):
+#         # --- Get current slave surface geometry ---
+#         SlaveSurfNode = GetSurfaceNode(FEMod.cells[SlaveSurf[0,i], :], SlaveSurf[1,i])
+#         SlaveSurfNodeXYZ = get_deformed_position(SlaveSurfNode, FEMod.X, Disp)
 
-        # Ray-tracing Newton-Raphson iteration
-        rs, Exist = newton_raphson_raytracing(SlavePoint_, SlavePointTan, MasterSurfXYZ, Exist, Tol)
+#         # Current integration point coordinates (MATLAB -> Python: subtract 1)
+#         ip_idx = ContactPairs.SlaveIntegralPoint[i] - 1
+#         CurIP = IntegralPoint[ip_idx, :].astype(np.float64)
+        
+#         N, dN = GetSurfaceShapeFunction(CurIP)
+#         SlavePoint = SlaveSurfNodeXYZ.T@N
+#         SlavePointTan = (dN @ SlaveSurfNodeXYZ).T # [(2,4)x(4,3)].T --> (3,2)
 
-        # --- Save nearest RayTracing point ---
-        if np.max(np.abs(rs)) <= 1.01:
-            v = np.cross(SlavePointTan[:, 0], SlavePointTan[:, 1])
-            v /= np.linalg.norm(v)
+#         rr, ss, MasterEle, MasterSign, gg, Exist = opt.GetContactPointbyRayTracing(
+#             FEMod.cells, FEMod.X, MasterSurf_, Disp, SlavePoint, SlavePointTan)
             
-            N, _ = GetSurfaceShapeFunction(rs)
-            NX = MasterSurfXYZ.T@N
-            
-            g = np.dot(NX - SlavePoint_, v)
+#         if Exist == 1:
+#             ContactPairs.CurMasterSurf[:, i] = np.array([MasterEle, MasterSign])
+#             ContactPairs.rc[i] = rr
+#             ContactPairs.sc[i] = ss
+#             ContactPairs.Cur_g[i] = gg
+#         else:
+#             # print("contact not found at ", i)
+#             ContactPairs.CurMasterSurf[:, i] = 0 
+#             ContactPairs.rc[i] = 0
+#             ContactPairs.sc[i] = 0
+#             ContactPairs.Cur_g[i] = 0
+#             ContactPairs.CurContactState[i] = 0
 
-            ContactCandidate[idx, 0] = MasterSurf[0, surf_idx]
-            ContactCandidate[idx, 1] = MasterSurf[1, surf_idx]
-            ContactCandidate[idx, 2:5] = np.array((rs[0], rs[1], g))
-            ContactCandidate[idx, 5:8] = v
-
-            if Exist <= 0:
-                if g >= 0 and abs(Ming) > abs(g):
-                    Exist = 0; MinGrow = idx; Ming = g
-                elif g < 0:
-                    Exist = 1; MinGrow = idx; Ming = g
-            elif Exist == 1:
-                if g < 0 and abs(Ming) > abs(g):
-                    Exist = 1; MinGrow = idx; Ming = g
-
-    # --- Final contact outputs ---
-    if Exist == 0 or Exist == 1:
-        MasterEle = ContactCandidate[MinGrow, 0] + 1
-        MasterSign = ContactCandidate[MinGrow, 1] + 1
-        rr = ContactCandidate[MinGrow, 2]
-        ss = ContactCandidate[MinGrow, 3]
-        gg = ContactCandidate[MinGrow, 4]
-    else:
-        MasterEle = 1e10
-        MasterSign = 1e10
-        rr = 1e10
-        ss = 1e10
-        gg = 1e10
-
-    return rr, ss, MasterEle, MasterSign, gg, Exist
+#     return ContactPairs
