@@ -9,7 +9,8 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
-import optimised_functions as opt
+# import optimised_functions as opt
+import optimised_functions2 as opt2
 
 octave.addpath(octave.genpath("/home/felipe/sources/pyola_contact2/src/"))  # doctest: +SKIP
 
@@ -307,7 +308,7 @@ def DetermineFrictionlessContactState(FEMod, ContactPairs, Dt, PreDisp, GKF, Res
 
     # --- Contact search and friction factor
 
-    ContactPairs = opt.ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
+    ContactPairs = opt2.ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), IntegralPoint)
     # support both dict-like and attribute-style FEMod
     FricFac = FEMod['FricFac'] if isinstance(FEMod, dict) else FEMod.FricFac
 
