@@ -17,8 +17,6 @@ from fem_lib import *
 from contact_lib import *
 from utils import *
 from timeit import default_timer as timer
-import optimised_functions as opt
-
 
 # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
@@ -70,7 +68,7 @@ for i in range(Nit - 1):
 
         # Internal force and tangent stiffness
         # Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
-        Residual, GKF = opt.GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Dtan, Residual)
+        Residual, GKF = GetStiffnessAndForce_opt(FEMod.X, FEMod.cells, Disp, Dtan, Residual)
     
         contactPairs, GKF, Residual = DetermineFrictionlessContactState(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)

@@ -9,7 +9,6 @@ import numpy as np
 from oct2py import Struct
 from oct2py import octave
 from utils import *
-import optimised_functions as opt
 from ray_tracing import GetContactPointbyRayTracing
 from scipy.spatial import cKDTree
 
