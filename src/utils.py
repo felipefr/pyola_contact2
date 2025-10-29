@@ -7,20 +7,21 @@ Created on Thu Oct  9 10:35:06 2025
 """
 import numpy as np
 import numba
+from numba import float64
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def ten2voigt(T, fac):
     return np.array([T[0,0], T[1,1], T[2,2],
                      fac*T[0,1], fac*T[1,2], fac*T[0,2]], dtype = np.float64)
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def voigt2ten(v, fac):
     T = np.array([[v[0], v[3]/fac, v[5]/fac],
                   [v[3]/fac, v[1], v[4]/fac],
                   [v[5]/fac, v[4]/fac, v[2]]], dtype = np.float64)
     return T
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def get_dofs_given_nodes_ids(nodes_ids):
     DOFs = np.empty(nodes_ids.shape[0] * 3, dtype=np.int64)
     for m, node in enumerate(nodes_ids):
@@ -37,7 +38,7 @@ FACE_INDEX = np.array([[3, 2, 1, 0],
                        [4, 7, 3, 0]], dtype=np.int64)
 
 # Convert a 3D vector to its skew-symmetric matrix (cross-product matrix).
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def TransVect2SkewSym(Vect):
     Vect = np.asarray(Vect).flatten()
     SkewSym = np.array([[0, -Vect[2], Vect[1]],
@@ -47,7 +48,7 @@ def TransVect2SkewSym(Vect):
 
 
 # get N1 and N2 as dN
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def get_surface_geometry(N, N1, N2, SurfXYZ):
     """
     Compute surface geometry quantities from shape functions and nodal coordinates.
@@ -80,7 +81,7 @@ def get_surface_geometry(N, N1, N2, SurfXYZ):
     return n, J, NTx[0,:], NTx[1,:], x
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
     """
     GetSurfaceNode - Return the node indices defining a surface of a hexahedral element.
@@ -101,7 +102,7 @@ def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
     return elementLE[FACE_INDEX[SurfSign-matlab_shift]].astype(np.int64) - matlab_shift
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def solve_2x2_system_nb(A, b):
     """
     Solves a 2x2 linear system Ax = b for x, where:
@@ -149,7 +150,7 @@ def solve_2x2_system_nb(A, b):
     return x
 
 # === Surface shape function and derivatives ===
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def GetSurfaceShapeFunction(rs):
     """
     GetSurfaceShapeFunction - Compute shape functions and their derivatives
@@ -175,20 +176,21 @@ def GetSurfaceShapeFunction(rs):
     
     return N, dN
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def get_deformed_position(nodes_ids, nodes, disp):
     # Build DOF list
     DOFs = get_dofs_given_nodes_ids(nodes_ids)
     # return deformed coordinates
     return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def get_deformed_position_given_dofs(nodes_ids, nodes, disp, DOFs):
     # return deformed coordinates
     return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
 
 
-@numba.jit(nopython=True)
+sig = 'float64[:,:](float64, float64)'
+@numba.jit([sig], nopython=True, cache=True)
 def get_isotropic_celas(E, nu):
     """
     Return 6x6 isotropic elasticity (tangent) matrix for 3D elasticity.

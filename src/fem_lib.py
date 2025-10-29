@@ -54,7 +54,7 @@ def GetStiffnessAndForce(X, cells, Disp, Residual, GKF, Dtan):
     return Residual, GKF
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def GetStiffnessAndForceElemental(XL, DispL, Dtan):
     XG = np.array([-0.57735026918963, 0.57735026918963])
     WGT = np.array([1.0, 1.0])
@@ -95,7 +95,7 @@ def GetStiffnessAndForceElemental(XL, DispL, Dtan):
 
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def getBmatrices(Shpd, F):
     """
     Compute BN (strain-displacement) and BG (geometric) matrices
@@ -153,7 +153,7 @@ def getBmatrices(Shpd, F):
 
     return BN, BG
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def GetShapeFunction(XI, Elxy):
     XNode = np.array([
         [-1, 1, 1, -1, -1, 1, 1, -1],

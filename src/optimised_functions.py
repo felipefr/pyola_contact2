@@ -7,6 +7,7 @@ Created on Tue Oct 28 13:48:41 2025
 """
 
 import numba as nb
+from numba import njit, float64, int64
 import numpy as np
 from utils import *
 from scipy.spatial import cKDTree
@@ -24,7 +25,8 @@ def GetStiffnessAndForce(X, cells, Disp, Dtan, rhs):
     
     return rhs, K
 
-# @nb.jit(parallel = True)
+sig = "Tuple((int64[:], int64[:], float64[:], float64[:]))(float64[:,:], int64[:,:], float64[:], float64[:,:], float64[:])"
+@njit([sig], parallel = True, cache = True)
 def assemble_triplets(X, cells, Disp, Dtan, rhs):
     n_threads = nb.get_num_threads()
     n_elem = cells.shape[0]

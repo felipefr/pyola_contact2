@@ -434,34 +434,6 @@ def get_frictionless_K(Na, Nb, pc, tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J
 
     return FrictionlessK
 
-@numba.jit(nopython=True)
-def newton_raphson_raytracing(SlavePoint, SlavePointTan, MasterSurfXYZ, Exist, Tol):
-    rs = np.zeros(2)
-    for j in range(int(1e8)):
-        N, dN = GetSurfaceShapeFunction(rs)
-
-        NX = MasterSurfXYZ.T@N
-        NTX = dN @ MasterSurfXYZ # (2,4)x(4,3) --> (2,3)
-                
-        # SlavePointTan is (3,2) , fai is (2,), SlavePoint and Nx are (3,)
-        fai = SlavePointTan.T @ (SlavePoint - NX)
-
-        if j == 500:
-            rs[0] = 1e5
-            Exist = -1
-            break
-
-        if np.max(np.abs(fai)) < Tol:
-            break
-
-        KT = (NTX@SlavePointTan).T
-        drs = solve_2x2_system_nb(KT, fai)
-
-        rs += drs
-
-    return rs, Exist
-
-
 
 # def ContactSearch(FEMod, ContactPairs, Disp, IntegralPoint):
 #     """

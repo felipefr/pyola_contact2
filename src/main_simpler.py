@@ -7,7 +7,7 @@ Created on Wed Oct  8 17:12:15 2025
 """
 
 import numba
-numba.set_num_threads(40)
+numba.set_num_threads(8)
     
 from oct2py import octave
 import numpy as np
@@ -47,11 +47,9 @@ AllDOF = Dim * NodeNum
 FixDOF = Dim * (FEMod.Cons[:, 0] - 1) + FEMod.Cons[:, 1] - 1 
 FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF)
 
-Disp=np.zeros(AllDOF, dtype = np.float64);
-
 start = timer()
 # --- Main loop ---
-
+Disp=np.zeros(AllDOF, dtype = np.float64);
 ExtFVect = np.zeros(AllDOF, dtype = np.float64)
 Residual = np.zeros(AllDOF, dtype = np.float64)
 for i in range(Nit - 1):

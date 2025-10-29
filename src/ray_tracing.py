@@ -15,7 +15,7 @@ from scipy.spatial import cKDTree
 import copy
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
     Tol = 1e-8
     rs = np.zeros(2, dtype = np.float64)
@@ -108,7 +108,7 @@ def GetContactPointbyRayTracing(FEMod, Disp, SlavePoint, SlavePointFrame, Master
 
     return rr, ss, MasterEle, MasterSign, gg, Exist
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def raytracing_moller_trumbore_tri(o, d, v0, v1, v2, eps=1e-9):
     """
     Compute ray-triangle intersection using Möller–Trumbore algorithm.
@@ -162,7 +162,7 @@ def raytracing_moller_trumbore_tri(o, d, v0, v1, v2, eps=1e-9):
         return 1, u, v, t
 
 
-@numba.jit(nopython=True)
+@numba.jit(nopython=True, cache=True)
 def raytracing_moller_trumbore_quad(SlavePoint, SlavePointFrame, MasterSurfXYZ):
 
     hit1 = raytracing_moller_trumbore_tri(SlavePoint, SlavePointFrame[0], MasterSurfXYZ[0], MasterSurfXYZ[1], MasterSurfXYZ[2])
