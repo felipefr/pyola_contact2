@@ -17,7 +17,7 @@ import copy
 
 @numba.jit(nopython=True, cache=True)
 def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
-    Tol = 1e-8
+    Tol = 1e-4
     rs = np.zeros(2, dtype = np.float64)
     SlavePointTan = SlavePointFrame[1:3]
     
@@ -30,7 +30,7 @@ def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
         # SlavePointTan is (3,2) , fai is (2,), SlavePoint and Nx are (3,)
         fai = SlavePointTan @ (SlavePoint - NX)
 
-        if j == 100: # failed to converge
+        if j == 500: # failed to converge
             rs[0] = 1e5
             return rs, -1, 1e7
 

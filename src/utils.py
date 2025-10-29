@@ -49,13 +49,13 @@ def TransVect2SkewSym(Vect):
 
 # get N1 and N2 as dN
 @numba.jit(nopython=True, cache=True)
-def get_surface_geometry(N, N1, N2, SurfXYZ):
+def get_surface_geometry(N, dN, SurfXYZ):
     """
     Compute surface geometry quantities from shape functions and nodal coordinates.
 
     Parameters
     ----------
-    N, N1, N2 : (n_nodes,) arrays
+    N, dN : (n_nodes,)  and (2,n_nodes) arrays
         Shape function and its derivatives with respect to local coordinates.
     SurfXYZ : (n_nodes, 3) array
         Nodal coordinates of the surface.
@@ -72,7 +72,7 @@ def get_surface_geometry(N, N1, N2, SurfXYZ):
         Current surface point coordinates.
     """
     x   = SurfXYZ.T@N
-    NTx = np.vstack((N1,N2))@SurfXYZ # (2,4)x(4,3) --> (2,3)
+    NTx = dN@SurfXYZ # (2,4)x(4,3) --> (2,3)
 
     n = np.cross(NTx[0,:], NTx[1,:])
     J = np.linalg.norm(n)
@@ -100,6 +100,13 @@ def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
     """
 
     return elementLE[FACE_INDEX[SurfSign-matlab_shift]].astype(np.int64) - matlab_shift
+
+#@numba.jit(nopython=True, cache=True)
+def GetSurfaceXYZ(cells, X, Disp, surf):
+    SurfNodes = GetSurfaceNode(cells[surf[0],:], surf[1])
+    SurfDOF = get_dofs_given_nodes_ids(SurfNodes)
+    XYZ = get_deformed_position_given_dofs(SurfNodes, X, Disp, SurfDOF)
+    return XYZ, SurfDOF
 
 
 @numba.jit(nopython=True, cache=True)

@@ -19,8 +19,8 @@ def modify_FEMod(FEMod):
     FEMod.cells = FEMod.Eles.astype(np.int64)-1
     FEMod.X = FEMod.Nodes.astype(np.float64)
     FEMod.Cons = FEMod.Cons.astype(np.int64)
-    del FEMod.Nodes
-    del FEMod.Eles
+    # del FEMod.Nodes
+    # del FEMod.Eles
     FEMod.SlaveSurf = FEMod.SlaveSurf.astype(np.int64)
     FEMod.MasterSurf = FEMod.MasterSurf.astype(np.int64)
     
