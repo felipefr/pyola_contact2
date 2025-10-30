@@ -23,7 +23,6 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from fem_lib import *
 from contact_lib import *
-from friction_contact_lib import *
 from utils import *
 from timeit import default_timer as timer
 
@@ -83,7 +82,7 @@ for i in range(Nit - 1):
         # Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
         Residual, GKF = GetStiffnessAndForce_opt(FEMod.X, FEMod.cells, Disp, Dtan, Residual)
     
-        contactPairs, GKF, Residual = DetermineContactState(
+        contactPairs, GKF, Residual = CalculateContactKandF(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
         

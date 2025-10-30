@@ -9,6 +9,20 @@ import numpy as np
 import numba
 from numba import float64
 
+
+@numba.jit(nopython=True, cache=True)
+def assemble_block(K11, K12, K21, K22):
+    n = K11.shape[0]  # assuming square sub-blocks
+    K = np.empty((2*n, 2*n), dtype= K11.dtype)
+
+    # Fill block by block
+    K[0:n,     0:n    ] = K11
+    K[0:n,     n:2*n  ] = K12
+    K[n:2*n,   0:n    ] = K21
+    K[n:2*n,   n:2*n  ] = K22
+
+    return K
+
 @numba.jit(nopython=True, cache=True)
 def ten2voigt(T, fac):
     return np.array([T[0,0], T[1,1], T[2,2],
