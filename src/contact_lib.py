@@ -120,17 +120,15 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     - ContactPairs fields are numpy arrays (struct-like object from Oct2Py or dict-like).
     """
     FricFac = FEMod.FricFac
+    I3 = np.eye(3)
     
     # --- current slave geometry & previous slave geometry ---
     ip_idx = ContactPairs.SlaveIntegralPoint[i] - 1             # MATLAB->Python index
     CurIP = IntegralPoint[ip_idx, :].astype(np.float64)                                 # shape (2,)
 
     Na, dNa = GetSurfaceShapeFunction(CurIP)
-    SlaveSurfNodes = GetSurfaceNode(FEMod.cells[ContactPairs.SlaveSurf[0,i]-1, :], 
-                                                ContactPairs.SlaveSurf[1,i]-1)
-    SlaveSurfDOF = get_dofs_given_nodes_ids(SlaveSurfNodes)
-    CurSlaveSurfXYZ = get_deformed_position_given_dofs(SlaveSurfNodes, FEMod.X, Disp, SlaveSurfDOF)
-    PreSlaveSurfXYZ = get_deformed_position_given_dofs(SlaveSurfNodes, FEMod.X, PreDisp, SlaveSurfDOF)
+    CurSlaveSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i] - 1)
+    PreSlaveSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.SlaveSurf[:, i] - 1)
     
     # geometric quantities
     Cur_n, J1, Cur_N1Xa, Cur_N2Xa, Cur_x1 = get_surface_geometry(Na, dNa, CurSlaveSurfXYZ)
@@ -140,25 +138,59 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     tn = ContactPairs.Cur_g[i] * ContactPairs.pc[i]
 
     dx1 = Cur_x1 - Pre_x1
-    PN = np.eye(3) - np.outer(Cur_n, Cur_n)
+    PN = I3 - np.outer(Cur_n, Cur_n)
 
     dg1_slave = Cur_N1Xa - Pre_N1Xa
     dg2_slave = Cur_N2Xa - Pre_N2Xa
     m1 = np.cross(dg1_slave, Cur_N2Xa) + np.cross(Cur_N1Xa, dg2_slave)
-    c1 = PN.dot(m1) / J1
+    c1 = (PN @ m1) / J1
 
     # --- master geometry at current and previous steps ---
     Nb, dNb = GetSurfaceShapeFunction(np.array((ContactPairs.rc[i], ContactPairs.sc[i]), dtype = np.float64))
-    MasterSurfNodes = GetSurfaceNode(FEMod.cells[ContactPairs.CurMasterSurf[0,i] - 1, :], 
-                                                 ContactPairs.CurMasterSurf[1,i] - 1 )
-    MasterSurfDOF = get_dofs_given_nodes_ids(MasterSurfNodes)
-    CurMasterSurfXYZ = get_deformed_position_given_dofs(MasterSurfNodes, FEMod.X, Disp, MasterSurfDOF)
-    PreMasterSurfXYZ = get_deformed_position_given_dofs(MasterSurfNodes, FEMod.X, PreDisp, MasterSurfDOF)
+    CurMasterSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.CurMasterSurf[:, i] - 1)
+    PreMasterSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.CurMasterSurf[:, i] - 1)
+    
 
     _, _, Cur_N1Xb, Cur_N2Xb, Cur_x2 = get_surface_geometry(Nb, dNb, CurMasterSurfXYZ)
     _, _, _, _, Pre_x2 = get_surface_geometry(Nb, dNb, PreMasterSurfXYZ)
 
     dx2 = Cur_x2 - Pre_x2
+
+    # --- precompute projection matrices and related arrays ---    
+    # Compute the 2x2 coupling matrix
+    Cur_NXa = np.vstack((Cur_N1Xa, Cur_N2Xa))  # shape (2, n)
+    Cur_NXb = np.vstack((Cur_N1Xb, Cur_N2Xb))  # shape (2, n)
+    a_ab = np.linalg.inv(Cur_NXa @ Cur_NXb.T)  # inverse
+    
+    # Compute bar vectors (each row is g1/g2 vector)
+    g_bar_slave  = a_ab @ Cur_NXb       # shape (2, n), rows: g1_bar_slave, g2_bar_slave
+    g_bar_master = a_ab.T @ Cur_NXa     # shape (2, n), rows: g1_bar_master, g2_bar_master
+    
+    # Optional: extract individual vectors
+    g1_bar_slave, g2_bar_slave   = g_bar_slave[0, :], g_bar_slave[1, :]
+    g1_bar_master, g2_bar_master = g_bar_master[0, :], g_bar_master[1, :]
+    
+    # Projections
+    N1 = np.outer(Cur_n, Cur_n)
+    N1_bar = I3 - np.outer(Cur_N1Xa, g1_bar_slave) - np.outer(Cur_N2Xa, g2_bar_slave)
+
+    # mc1_bar, mb2_bar: (3 x 4) each
+    mc1_bar = np.kron(dNa[0].T, g1_bar_slave.reshape(-1,1)) + np.kron(dNa[1].T, g2_bar_slave.reshape(-1,1))
+    mb2_bar = np.kron(dNb[0].T, g1_bar_master.reshape(-1,1)) + np.kron(dNb[1].T, g2_bar_master.reshape(-1,1))
+
+    Cur_g1_hat_slave = TransVect2SkewSym(Cur_N1Xa)
+    Cur_g2_hat_slave = TransVect2SkewSym(Cur_N2Xa)
+    Ac = (np.kron(dNa[0].T, Cur_g2_hat_slave) - np.kron(dNa[1].T, Cur_g1_hat_slave)) / J1
+
+    # N1_wave is a 3x3 matrix: outer(Cur_n, N1_bar @ Cur_n)
+    N1_wave = np.outer(Cur_n, N1_bar.dot(Cur_n))
+
+    # Mc1_bar & Mb2_bar arranged as in original code (3 x 12)
+    Mc1_bar = np.hstack([np.outer(Cur_n, mc1_bar[:, k]) for k in range(4)])
+    Mb2_bar = - np.hstack([np.outer(Cur_n, mb2_bar[:, k]) for k in range(4)])
+
+    # Gbc: shape (4,4)
+    Gbc = ContactPairs.Cur_g[i] * (dNb.T @ a_ab @ dNa)   # result 4x4
 
     # --- relative velocity and tangential direction ---
     r1 = ContactPairs.Cur_g[i] * c1 + dx1 - dx2
@@ -172,61 +204,31 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
         dh = 0.0  # not used further here (kept for parity)
 
     # --- contact nodal force (frictionless baseline uses tv = tn * Cur_n) --
-    tv = tn * ( Cur_n + FricFac * s1)
-    ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
-
-    ContactPairs.Pressure[i]  = abs(tn)
-    ContactPairs.Traction[i] = np.linalg.norm(tv)
-
-    # --- precompute projection matrices and related arrays ---
-    A_ab = np.array([[Cur_N1Xa.dot(Cur_N1Xb), Cur_N1Xa.dot(Cur_N2Xb)],
-                     [Cur_N2Xa.dot(Cur_N1Xb), Cur_N2Xa.dot(Cur_N2Xb)]])
-    a_ab = np.linalg.inv(A_ab)
-
-    g1_bar_slave  = a_ab[0,0] * Cur_N1Xb + a_ab[1,0] * Cur_N2Xb
-    g2_bar_slave  = a_ab[0,1] * Cur_N1Xb + a_ab[1,1] * Cur_N2Xb
-    g1_bar_master = a_ab[0,0] * Cur_N1Xa + a_ab[0,1] * Cur_N2Xa
-    g2_bar_master = a_ab[1,0] * Cur_N1Xa + a_ab[1,1] * Cur_N2Xa
-
-    N1 = np.outer(Cur_n, Cur_n)
-    N1_bar = np.eye(3) - np.outer(Cur_N1Xa, g1_bar_slave) - np.outer(Cur_N2Xa, g2_bar_slave)
-
-    # mc1_bar, mb2_bar: (3 x 4) each
-    mc1_bar = np.kron(dNa[0].reshape(1,4), g1_bar_slave.reshape(3,1)) + np.kron(dNa[1].reshape(1,4), g2_bar_slave.reshape(3,1))
-    mb2_bar = np.kron(dNb[0].reshape(1,4), g1_bar_master.reshape(3,1)) + np.kron(dNb[1].reshape(1,4), g2_bar_master.reshape(3,1))
-
-    Cur_g1_hat_slave = TransVect2SkewSym(Cur_N1Xa)
-    Cur_g2_hat_slave = TransVect2SkewSym(Cur_N2Xa)
-    Ac = (np.kron(dNa[0].reshape(1,4), Cur_g2_hat_slave) - np.kron(dNa[1].reshape(1,4), Cur_g1_hat_slave)) / J1
-
-    # N1_wave is a 3x3 matrix: outer(Cur_n, N1_bar @ Cur_n)
-    N1_wave = np.outer(Cur_n, N1_bar.dot(Cur_n))
-
-    # Mc1_bar & Mb2_bar arranged as in original code (3 x 12)
-    Mc1_bar = np.hstack([np.outer(Cur_n, mc1_bar[:, k]) for k in range(4)])
-    Mb2_bar = np.hstack([-np.outer(Cur_n, mb2_bar[:, k]) for k in range(4)])
-
-    # N12 arrays for Gbc: shape (2,4)
-    N12a = np.vstack((dNa[0].reshape(1,4), dNa[1].reshape(1,4)))
-    N12b = np.vstack((dNb[0].reshape(1,4), dNb[1].reshape(1,4)))
-    Gbc = ContactPairs.Cur_g[i] * (N12b.T.dot(a_ab).dot(N12a))   # result 4x4
-
+    tv = tn * Cur_n
+    
     # Assemble frictionless stiffness
     KL = -get_frictionless_K(Na, Nb, ContactPairs.pc[i], tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1)
     
     if FricFac != 0 and np.linalg.norm(s1) > 1e-8:        
+        tv += tn* FricFac * s1
         FrictionalK = get_frictional_K_slip(Na, Nb, ContactPairs.pc[i], tn, Ac, Mc1_bar, 
                                        Mb2_bar, Gbc, N1, N1_wave, J1, Cur_n, m1, 
                                        dg1_slave, dg2_slave, dNa, PN, vr, Dt, s1, r1, 
                                        ContactPairs.Cur_g[i], FricFac, c1, N1_bar, mc1_bar, mb2_bar)
+    
+        
         KL -= FrictionalK   
+
+    ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
+    ContactPairs.Pressure[i]  = abs(tn)
+    ContactPairs.Traction[i] = np.linalg.norm(tv)
     
     return KL, ContactNodeForce, ContactPairs
 
 
 
 
-def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):
+def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):    
     # --- slave geometry at current IP ---
     ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
     CurIP = IntegralPoint[ip_idx, :]
@@ -245,22 +247,22 @@ def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integ
     CurMasterSurfXYZ_rpsp, MasterSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.PreMasterSurf[:, i].astype(np.int64) - 1)
     Cur_x2_p = CurMasterSurfXYZ_rpsp.T @ Nb
 
-    # --- relative sliding vector ---
-    gs = Cur_x2_p - Cur_x1
-    tv = ContactPairs.pc[i] * gs
-
-    ContactPairs.Pressure[i] = abs(np.dot(tv, Cur_n))
-    ContactPairs.Traction[i] = np.linalg.norm(tv)
-    
-    ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
-
-    # # --- stiffness ---
     Cur_g1_hat_slave = TransVect2SkewSym(Cur_NXa[0])
     Cur_g2_hat_slave = TransVect2SkewSym(Cur_NXa[1])
     Ac = (np.kron(dNa[0].T, Cur_g2_hat_slave) - np.kron(dNa[1].T, Cur_g1_hat_slave)) / J1
-    
+       
+    # --- relative sliding vector ---
+    gs = Cur_x2_p - Cur_x1
+    tv = ContactPairs.pc[i] * gs    
+    ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
+
+    # # --- stiffness ---
     KL = -get_frictional_K_stick(Na, Nb, ContactPairs.pc[i], J1, tv, Ac, Cur_n)
 
+    
+    ContactPairs.Pressure[i] = abs(np.dot(tv, Cur_n))
+    ContactPairs.Traction[i] = np.linalg.norm(tv)
+    
     return KL, ContactNodeForce, ContactPairs 
 
 
