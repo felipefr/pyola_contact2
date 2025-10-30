@@ -285,28 +285,8 @@ def CalculateContactKandF_onlyslip2(FEMod, ContactPairs, Dt, PreDisp, i, Disp, I
     N12a = np.vstack((dNa[0].reshape(1,4), dNa[1].reshape(1,4)))
     N12b = np.vstack((dNb[0].reshape(1,4), dNb[1].reshape(1,4)))
     Gbc = ContactPairs.Cur_g[i] * (N12b.T.dot(a_ab).dot(N12a))   # result 4x4
-
-    if FricFac != 0 and np.linalg.norm(s1) > 1e-8:
-        # Q1 = ((Cur_n' * m1) * eye(3) + Cur_n * m1') / J1;
-        # dg1_hat_slave = TransVect2SkewSym(dg1_slave);
-        # dg2_hat_slave = TransVect2SkewSym(dg2_slave);
-        # Ac1_bar = (kron(N1a', dg2_hat_slave) - kron(N2a', dg1_hat_slave)) / J1;
-        
-        # dh = sqrt((PN * vr)' * (PN * vr)) * Dt;
-        # Ps = (eye(3) - s1 * s1') / dh;
-        
-        # R1 = ((Cur_n' * r1) * eye(3) + Cur_n * r1') / ContactPairs.Cur_g(i);
-        # B1 = (Ps * c1) * (N1_bar * Cur_n)' - Ps * PN;
-        # L1 = ContactPairs.Cur_g(i) * Ps * (PN * Q1 + R1 - eye(3)) * PN;
-        
-        # Jc1 = L1 * Ac - ContactPairs.Cur_g(i) * Ps * PN * Ac1_bar;
-        
-        # hc1_add = N1 * mc1_bar + Ac * kron(eye(4), Cur_n);
-        # hc1_sub = N1 * mc1_bar - Ac * kron(eye(4), Cur_n);
-        
-        # S1 = s1 * Cur_n';
-        # S1_wave = s1 * (N1_bar * Cur_n)';
-        
+    
+    if FricFac != 0 and np.linalg.norm(s1) > 1e-8:        
         Q1 = (np.dot(Cur_n, m1) * np.eye(3) + np.outer(Cur_n, m1)) / J1
         dg1_hat_slave = TransVect2SkewSym(dg1_slave)
         dg2_hat_slave = TransVect2SkewSym(dg2_slave)
@@ -318,211 +298,54 @@ def CalculateContactKandF_onlyslip2(FEMod, ContactPairs, Dt, PreDisp, i, Disp, I
         L1 = ContactPairs.Cur_g[i] * Ps @ (PN @ Q1 + R1 - np.eye(3)) @ PN 
         Jc1 = L1 @ Ac - ContactPairs.Cur_g[i] * Ps @ PN @ Ac1_bar
         
+
         hc1_add = N1 @ mc1_bar + Ac @ np.kron(np.eye(4), Cur_n.reshape((-1,1)))
         hc1_sub = N1 @ mc1_bar - Ac @ np.kron(np.eye(4), Cur_n.reshape((-1,1)))
         S1 = np.outer(s1, Cur_n)
-        S1_wave = s1 @ (N1_bar @ Cur_n).T
+        S1_wave = np.outer(s1, N1_bar @ Cur_n)
         
         Frictional_K11 = np.zeros((12, 12))
         Frictional_K12 = np.zeros((12, 12))
         Frictional_K21 = np.zeros((12, 12))
         Frictional_K22 = np.zeros((12, 12))
         
+        # --- Precompute common terms ---
+        pc_term = ContactPairs.pc[i] * S1_wave + tn * B1   # Common part: pressure + normal term
+        g_cur = ContactPairs.Cur_g[i]                      # Current gap scalar
+        scale = FricFac * J1                               # Friction factor and Jacobian scaling
+        
+        # --- Loop over local nodes (4 nodes, 3 dofs each) ---
         for aa in range(4):
             for bb in range(4):
-                idxA = slice(3*aa, 3*aa + 3)
-                idxB = slice(3*bb, 3*bb + 3)
+                # --- Local index ranges (Python uses 0-based indexing) ---
+                idxA = slice(3 * aa, 3 * aa + 3)
+                idxB = slice(3 * bb, 3 * bb + 3)
         
-                tempK = (
-                    -Na[aa] * Na[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    - Na[aa] * FricFac * tn * (
-                        s1 @ hc1_sub[:, bb].T
-                        + ContactPairs.Cur_g[i] * Ps * c1 @ hc1_add[:, bb].T
-                        - Jc1[:, idxB]
-                    )
-                ) * J1
-                Frictional_K11[idxA, idxB] += tempK
+                # --- Frequently reused shape function values ---
+                NaA, NaB = Na[aa], Na[bb]
+                NbA, NbB = Nb[aa], Nb[bb]
         
-                tempK = (Na[aa] * Nb[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)) * J1
-                Frictional_K12[idxA, idxB] += tempK
+                # --- Common sub-blocks for readability ---
+                sub_hc = (np.outer(s1, hc1_sub[:, bb])
+                          + g_cur * Ps @ np.outer(c1, hc1_add[:, bb])
+                          - Jc1[:, idxB])
         
-                tempK = (
-                    Nb[aa] * Na[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    + Nb[aa] * FricFac * tn * (
-                        s1 @ hc1_sub[:, bb].T
-                        + ContactPairs.Cur_g[i] * Ps * c1 @ hc1_add[:, bb].T
-                        - Jc1[:, idxB]
-                    )
-                    + Na[bb] * FricFac * tn * (-s1 @ mb2_bar[:, aa].T)
-                    + Gbc[aa, bb] * FricFac * tn * S1
-                ) * J1
-                Frictional_K21[idxA, idxB] += tempK
+                sub_mb2 = -np.outer(s1, mb2_bar[:, aa])
         
-                tempK = (
-                    -Nb[aa] * Nb[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    - Nb[bb] * FricFac * tn * (-s1 @ mb2_bar[:, aa].T)
-                ) * J1
-                Frictional_K22[idxA, idxB] += tempK
+                Frictional_K11[idxA, idxB] += scale * (-NaA * NaB * pc_term - NaA * tn * sub_hc)
+                Frictional_K12[idxA, idxB] += scale * (NaA * NbB * pc_term)
+                Frictional_K21[idxA, idxB] += scale * (NbA * NaB * pc_term
+                                                       + NbA * tn * sub_hc
+                                                       + NaB * tn * sub_mb2
+                                                       + Gbc[aa, bb] * tn * S1)
+                Frictional_K22[idxA, idxB] += scale * (-NbA * NbB * pc_term - NbB * tn * sub_mb2)
+                
         
-    
-    Frictional_K = np.block([ [Frictional_K11, Frictional_K12],
-                              [Frictional_K21, Frictional_K22]])
+        Frictional_K = np.block([ [Frictional_K11, Frictional_K12],
+                                  [Frictional_K21, Frictional_K22]])
 
     return -Frictional_K , ContactNodeForce, ContactPairs
 
-
-    
-    
-def CalculateContactKandF_onlyslip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):
-    Frictional_K = np.zeros((24,24))
-    ContactNodeForce = np.zeros(24)
-    FricFac = FEMod.FricFac
-    tn = ContactPairs.Cur_g[i] * ContactPairs.pc[i]
-
-    # --- slave geometry current and previous ---
-    ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
-    CurIP = IntegralPoint[ip_idx, :]
-    Na, dNa = GetSurfaceShapeFunction(CurIP)
-    CurSlaveSurfXYZ, SlaveSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i] - 1)
-    PreSlaveSurfNodeXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.SlaveSurf[:, i] - 1)
-
-    Cur_x1 = CurSlaveSurfXYZ.T @ Na
-    Pre_x1 = PreSlaveSurfNodeXYZ.T @ Na
-    dx1 = Cur_x1 - Pre_x1
-
-    Pre_NXa = dNa @ PreSlaveSurfNodeXYZ
-    Cur_NXa = dNa @ CurSlaveSurfXYZ
-
-    Cur_n = np.cross(Cur_NXa[0], Cur_NXa[1])
-    Cur_n /= np.linalg.norm(Cur_n)
-    J1 = np.linalg.norm(np.cross(Cur_NXa[0], Cur_NXa[1]))
-    PN = np.eye(3) - np.outer(Cur_n, Cur_n)
-
-    dg1_slave = Cur_NXa[0] - Pre_NXa[0]
-    dg2_slave = Cur_NXa[1] - Pre_NXa[1]
-    m1 = np.cross(dg1_slave, Cur_NXa[1]) + np.cross(Cur_NXa[0], dg2_slave)
-    c1 = PN @ m1 / J1
-
-#     # --- master geometry ---
-    Nb, dNb = GetSurfaceShapeFunction(np.array([ContactPairs.rc[i], ContactPairs.sc[i]]))
-    CurMasterSurfNodeXYZ, MasterSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.CurMasterSurf[:, i] - 1)
-    PreMasterSurfNodeXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.CurMasterSurf[:, i] - 1)
-    
-    Cur_x2 = CurMasterSurfNodeXYZ.T@Nb  # shape (3,)
-    Pre_x2 = PreMasterSurfNodeXYZ.T@Nb  # shape (3,)
-    Cur_NXb = dNb@CurMasterSurfNodeXYZ  # shape (3,)
-#        Cur_NXa = dNb@CurSlaveSurfXYZ # shape (3,)
-
-    dx2 = Cur_x2 - Pre_x2
-
-#     # --- tangential sliding ---
-    r1 = ContactPairs.Cur_g[i] * c1 + dx1 - dx2
-    vr = r1 / Dt
-    s1_temp = PN @ vr
-    s1 = s1_temp / np.linalg.norm(s1_temp) if np.linalg.norm(s1_temp) > 1e-8 else np.zeros(3)
-
-    # --- contact nodal force ---
-
-    tv = tn * FricFac * s1
-    ContactPairs.Pressure[i] = abs(tn)
-    ContactPairs.Traction[i] = np.linalg.norm(tv)
-
-    for a in range(4):
-        idxA = slice(3*a, 3*a+3)
-        ContactNodeForce[idxA] = Na[a] * tv * J1
-        ContactNodeForce[idxA.start+12:idxA.stop+12] = -Nb[a] * tv * J1
-
-    # --- projection matrices ---
-    A_ab = np.array([[Cur_NXa[0] @ Cur_NXa[0], Cur_NXa[0] @ Cur_NXa[1]],
-                     [Cur_NXa[1] @ Cur_NXa[0], Cur_NXa[1] @ Cur_NXa[1]]])
-    a_ab = np.linalg.inv(A_ab)
-
-    g1_bar_slave  = a_ab[0,0]*Cur_NXa[0] + a_ab[1,0]*Cur_NXa[1]
-    g2_bar_slave  = a_ab[0,1]*Cur_NXa[0] + a_ab[1,1]*Cur_NXa[1]
-    # g1_bar_master = a_ab[0,0]*Cur_NXa[0] + a_ab[0,1]*Cur_NXa[1]
-    # g2_bar_master = a_ab[1,0]*Cur_NXa[0] + a_ab[1,1]*Cur_NXa[1]
-
-    N1_bar = np.eye(3) - np.outer(Cur_NXa[0], g1_bar_slave) - np.outer(Cur_NXa[1], g2_bar_slave)
-
-    # --- Ac, mc1_bar, mb2_bar, Gbc ---
-    Cur_g1_hat_slave = TransVect2SkewSym(Cur_NXa[0])
-    Cur_g2_hat_slave = TransVect2SkewSym(Cur_NXa[1])
-    Ac = (np.kron(dNa[0][:, None].T, Cur_g2_hat_slave) - np.kron(dNa[1][:, None].T, Cur_g1_hat_slave)) / J1
-    
-    # Felipe
-    mc1_bar = a_ab[0,0] * Cur_NXb[0] + a_ab[1,0] * Cur_NXb[1]  # shape (3,)
-    mb2_bar = a_ab[0,0] * Cur_NXa[0] + a_ab[0,1] * Cur_NXa[1]  # shape (3,) # why not [1,1]?
-    
-    # Mc1_bar = [ Cur_n * mc1_bar(:,1)' , Cur_n * mc1_bar(:,2)' , Cur_n * mc1_bar(:,3)' , Cur_n * mc1_bar(:,4)' ];
-    # Mb2_bar = [ -Cur_n * mb2_bar(:,1)' , -Cur_n * mb2_bar(:,2)' , -Cur_n * mb2_bar(:,3)' , -Cur_n * mb2_bar(:,4)' ];
-    # Mc1_bar = np.hstack([np.outer(Cur_n, mc1_bar[:, i]) for i in range(4)])
-    # Mb2_bar = np.hstack([-np.outer(Cur_n, mb2_bar[:, i]) for i in range(4)])
-                                   
-    Gbc = ContactPairs.Cur_g[i] * (dNb.T @ a_ab @ dNa)  
-    
-    # # --- Frictional K additions ---
-    
-    if FricFac != 0 and np.linalg.norm(s1) > 1e-8:
-        Q1 = ((Cur_n @ m1) * np.eye(3) + np.outer(Cur_n, m1)) / J1
-        dh = np.linalg.norm(PN @ vr) * Dt
-        Ps = (np.eye(3) - np.outer(s1, s1)) / dh
-        R1 = ((Cur_n @ r1) * np.eye(3) + np.outer(Cur_n, r1)) / ContactPairs.Cur_g[i]
-        B1 = (Ps @ c1) @ (N1_bar @ Cur_n).T - Ps @ PN;
-        L1 = ContactPairs.Cur_g[i] * Ps @ (PN @ Q1 + R1 - np.eye(3)) @ PN
-        Jc1 = L1 @ Ac - ContactPairs.Cur_g[i] * Ps @ PN @ (np.kron(dNa[0].T, TransVect2SkewSym(dg2_slave)) - np.kron(dNa[1].T, TransVect2SkewSym(dg1_slave))) / J1
-
-        hc1_add = dNa @ mc1_bar + Ac @ np.kron(np.eye(4), Cur_n)
-        hc1_sub = dNa @ mc1_bar - Ac @ np.kron(np.eye(4), Cur_n)
-        S1_wave = s1 @ (N1_bar @ Cur_n).T
-        S1 = np.outer(s1, Cur_n)
-        
-        Frictional_K11 = np.zeros((12, 12))
-        Frictional_K12 = np.zeros((12, 12))
-        Frictional_K21 = np.zeros((12, 12))
-        Frictional_K22 = np.zeros((12, 12))
-
-        
-        for aa in range(4):
-            for bb in range(4):
-                idxA = slice(3*aa, 3*aa + 3)
-                idxB = slice(3*bb, 3*bb + 3)
-        
-                tempK = (
-                    -Na[aa] * Na[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    - Na[aa] * FricFac * tn * (
-                        s1 @ hc1_sub[:, bb].T
-                        + ContactPairs.Cur_g[i] * Ps * c1 @ hc1_add[:, bb].T
-                        - Jc1[:, idxB]
-                    )
-                ) * J1
-                Frictional_K11[idxA, idxB] += tempK
-        
-                tempK = (Na[aa] * Nb[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)) * J1
-                Frictional_K12[idxA, idxB] += tempK
-        
-                tempK = (
-                    Nb[aa] * Na[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    + Nb[aa] * FricFac * tn * (
-                        s1 @ hc1_sub[:, bb].T
-                        + ContactPairs.Cur_g[i] * Ps * c1 @ hc1_add[:, bb].T
-                        - Jc1[:, idxB]
-                    )
-                    + Na[bb] * FricFac * tn * (-s1 @ mb2_bar[:, aa].T)
-                    + Gbc[aa, bb] * FricFac * tn * S1
-                ) * J1
-                Frictional_K21[idxA, idxB] += tempK
-        
-                tempK = (
-                    -Nb[aa] * Nb[bb] * FricFac * (ContactPairs.pc[i] * S1_wave + tn * B1)
-                    - Nb[bb] * FricFac * tn * (-s1 @ mb2_bar[:, aa].T)
-                ) * J1
-                Frictional_K22[idxA, idxB] += tempK
-        
-    
-    Frictional_K = np.block([ [Frictional_K11, Frictional_K12],
-                              [Frictional_K21, Frictional_K22]])
-
-    return -Frictional_K , ContactNodeForce, ContactPairs
 
 def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp, IntegralPoint):
     FricFac = FEMod.FricFac
@@ -543,15 +366,15 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Di
                                                                     Disp, IntegralPoint)
         #if FricFac != 0:
         # GKF, Residual, ContactPairs = CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, GKF, Residual, Disp, IntegralPoint)
-        KL2, ResL2, ContactPairs = octave.CalculateContactKandF_onlyslip(FEMod, ContactPairs, Dt, PreDisp.reshape((-1,1)), i+1, 
-                                                                    Disp.reshape((-1,1)), IntegralPoint, nout = 3)
+        # KL2, ResL2, ContactPairs = octave.CalculateContactKandF_onlyslip(FEMod, ContactPairs, Dt, PreDisp.reshape((-1,1)), i+1, 
+                                                                    # Disp.reshape((-1,1)), IntegralPoint, nout = 3)
         
-        KL += KL2
-        ResL = ResL.flatten() + ResL2.flatten()
+        KL += KL3
+        ResL = ResL.flatten() + ResL3.flatten()
         # print(np.linalg.norm(ResL2))
         # print(np.linalg.norm(ResL3))
-        print(KL2[0,0], np.linalg.norm(KL2))
-        print(KL3[0,0], np.linalg.norm(KL3))
+        # print((KL2+KL)[0,0], np.linalg.norm(KL2 + KL))
+        # print((KL3+KL)[0,0], np.linalg.norm(KL3 + KL))
         # ResL = ResL.flatten()
         
     

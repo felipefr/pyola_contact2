@@ -103,7 +103,7 @@ function [KL, ResL, ContactPairs] = CalculateContactKandF_onlyslip(FEMod, Contac
         dg1_hat_slave = TransVect2SkewSym(dg1_slave);
         dg2_hat_slave = TransVect2SkewSym(dg2_slave);
         Ac1_bar = (kron(N1a', dg2_hat_slave) - kron(N2a', dg1_hat_slave)) / J1;
-
+        
         dh = sqrt((PN * vr)' * (PN * vr)) * Dt;
         Ps = (eye(3) - s1 * s1') / dh;
 
@@ -112,35 +112,63 @@ function [KL, ResL, ContactPairs] = CalculateContactKandF_onlyslip(FEMod, Contac
         L1 = ContactPairs.Cur_g(i) * Ps * (PN * Q1 + R1 - eye(3)) * PN;
 
         Jc1 = L1 * Ac - ContactPairs.Cur_g(i) * Ps * PN * Ac1_bar;
-
+                
         hc1_add = N1 * mc1_bar + Ac * kron(eye(4), Cur_n);
         hc1_sub = N1 * mc1_bar - Ac * kron(eye(4), Cur_n);
 
         S1 = s1 * Cur_n';
         S1_wave = s1 * (N1_bar * Cur_n)';
-
+        
         Frictional_K11 = zeros(12); Frictional_K12 = zeros(12);
         Frictional_K21 = zeros(12); Frictional_K22 = zeros(12);
 
+        pc_term = ContactPairs.pc(i) * S1_wave + tn * B1;     % Common part: pressure + normal term
+        g_cur   = ContactPairs.Cur_g(i);                      % Current gap scalar
+%        scale   = FricFac * J1;                               % Friction factor and Jacobian
+        
         for aa = 1:4
             for bb = 1:4
-                idxA = (3*aa-2):(3*aa); idxB = (3*bb-2):(3*bb);
-
-                tempK = ( -Na(aa) * Na(bb) * FricFac * (ContactPairs.pc(i) * S1_wave + tn * B1) ...
-                          - Na(aa) * FricFac * tn * ( s1 * hc1_sub(:, bb)' + ContactPairs.Cur_g(i) * Ps * c1 * hc1_add(:, bb)' - Jc1(:, idxB) ) ) * J1;
-                Frictional_K11(idxA, idxB) = Frictional_K11(idxA, idxB) + tempK;
-
-                tempK = ( Na(aa) * Nb(bb) * FricFac * (ContactPairs.pc(i) * S1_wave + tn * B1) ) * J1;
-                Frictional_K12(idxA, idxB) = Frictional_K12(idxA, idxB) + tempK;
-
-                tempK = ( Nb(aa) * Na(bb) * FricFac * (ContactPairs.pc(i) * S1_wave + tn * B1) ...
-                          + Nb(aa) * FricFac * tn * ( s1 * hc1_sub(:, bb)' + ContactPairs.Cur_g(i) * Ps * c1 * hc1_add(:, bb)' - Jc1(:, idxB) ) ...
-                          + Na(bb) * FricFac * tn * ( - s1 * mb2_bar(:, aa)' ) + Gbc(aa, bb) * FricFac * tn * S1 ) * J1;
-                Frictional_K21(idxA, idxB) = Frictional_K21(idxA, idxB) + tempK;
-
-                tempK = ( -Nb(aa) * Nb(bb) * FricFac * (ContactPairs.pc(i) * S1_wave + tn * B1) ...
-                          - Nb(bb) * FricFac * tn * ( - s1 * mb2_bar(:, aa)' ) ) * J1;
-                Frictional_K22(idxA, idxB) = Frictional_K22(idxA, idxB) + tempK;
+                % --- Local index ranges (3 dofs per node) ---
+                idxA = (3*aa - 2):(3*aa);
+                idxB = (3*bb - 2):(3*bb);
+        
+                % --- Frequently reused shape function values ---
+                NaA = Na(aa);  NaB = Na(bb);
+                NbA = Nb(aa);  NbB = Nb(bb);
+        
+                % --- Common sub-blocks for readability ---
+                sub_hc  = s1 * hc1_sub(:, bb)' + g_cur * Ps * c1 * hc1_add(:, bb)' - Jc1(:, idxB);
+                sub_mb2 = -s1 * mb2_bar(:, aa)';
+        
+                %------------------------------------------------------------------
+                % (1) K11 block
+                %------------------------------------------------------------------
+                tempK11 = (-NaA * NaB * FricFac * pc_term ...
+                           -NaA * FricFac * tn * sub_hc) * J1;
+                Frictional_K11(idxA, idxB) = Frictional_K11(idxA, idxB) + tempK11;
+        
+                %------------------------------------------------------------------
+                % (2) K12 block
+                %------------------------------------------------------------------
+                tempK12 = (NaA * NbB * FricFac * pc_term) * J1;
+                Frictional_K12(idxA, idxB) = Frictional_K12(idxA, idxB) + tempK12;
+        
+                %------------------------------------------------------------------
+                % (3) K21 block
+                %------------------------------------------------------------------
+                tempK21 = ( NbA * NaB * FricFac * pc_term ...
+                           +NbA * FricFac * tn * sub_hc ...
+                           +NaB * FricFac * tn * sub_mb2 ...
+                           +Gbc(aa, bb) * FricFac * tn * S1 ) * J1;
+                Frictional_K21(idxA, idxB) = Frictional_K21(idxA, idxB) + tempK21;
+        
+                %------------------------------------------------------------------
+                % (4) K22 block
+                %------------------------------------------------------------------
+                tempK22 = (-NbA * NbB * FricFac * pc_term ...
+                           -NbB * FricFac * tn * sub_mb2) * J1;
+                Frictional_K22(idxA, idxB) = Frictional_K22(idxA, idxB) + tempK22;
+        
             end
         end
 
