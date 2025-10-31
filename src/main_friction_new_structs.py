@@ -6,9 +6,9 @@ Created on Fri Oct 31 12:51:05 2025
 @author: frocha
 """
 
-
+from io_lib import *
 import numba
-numba.set_num_threads(40)
+numba.set_num_threads(32)
     
 #sfrom oct2py import octave
 import numpy as np
@@ -21,6 +21,7 @@ from timeit import default_timer as timer
 from mesh import Mesh
 from contact_pairs import ContactPairs
 
+
 # # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
 # octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
 
@@ -29,11 +30,15 @@ Tmax = 0.15
 Nit = 4
 NNRmax = 20
 tolNR = 1e-7
+FricFac = 0.1
 TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
-FEMod = Mesh('Beam.inp')
-FEMod.FricFac = 0.1
+FEMod = Mesh('Beam.inp', 
+             facets_id = [('_MASTERSURF_S4',3), ('_SLAVESURF_S6',5)],
+             force_bnd_id = 'SET-4',
+             dirichlet_bnd_id ='CONNODE')
+    
 
 # --- Material ---
 E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
@@ -41,7 +46,7 @@ Dtan= get_isotropic_celas(E, nu);
 
 # --- Contact ---
 # contactPairs = InitializeContactPairs(FEMod)
-contactPairs = ContactPairs(FEMod)
+contactPairs = ContactPairs(FEMod, FricFac = FricFac, master_surf_id = 0, slave_surf_id = 1)
 
 NodeNum, Dim = FEMod.X.shape
 AllDOF = Dim * NodeNum
@@ -111,7 +116,5 @@ for i in range(Nit - 1):
 
 end = timer()
 print("time : ", end-start)
-print("Using", numba.get_num_threads(), "threads")
-# UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
-# octave.PlotStructuralContours(FEMod.X,FEMod.cells,Disp,UM.reshape((-1,1)))
-
+UM = np.linalg.norm(Disp.reshape((-1,3)), axis = 1)
+# plot_structural_contours(FEMod, {'UMag' : UM}, U = Disp.reshape(-1,3))

@@ -36,7 +36,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
     ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), 
                                  MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame)
     # support both dict-like and attribute-style FEMod
-    FricFac = FEMod['FricFac'] if isinstance(FEMod, dict) else FEMod.FricFac
+    FricFac = ContactPairs.FricFac
     
     nPairs = ContactPairs.SlaveSurf.shape[1]
     
@@ -87,14 +87,14 @@ def ContactSearch(FEMod, ContactPairs, Disp, MasterSurfXYZ, SlaveSurfXYZ, SlaveP
     
     method = "newton"
 
-    MasterSurfNodeXYZ = get_deformed_position(FEMod.master_surf_nodes, FEMod.X, Disp) # redudant computations
+    MasterSurfNodeXYZ = get_deformed_position(ContactPairs.master_surf_nodes, FEMod.X, Disp) # redudant computations
     tree = cKDTree(MasterSurfNodeXYZ)
     
-    for i in range(FEMod.slave_surf_cells.shape[0]):        
+    for i in range(ContactPairs.slave_surf_cells.shape[0]):        
         for j in range(4): # gauss point number
             ipair = 4*i + j
             rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
-                FEMod, Disp, SlavePoints[ipair,:], SlavePointsFrame[ipair,:,:], MasterSurfXYZ, tree, method)
+                FEMod, ContactPairs, Disp, SlavePoints[ipair,:], SlavePointsFrame[ipair,:,:], MasterSurfXYZ, tree, method)
             
             
             if Exist == 1:
@@ -119,12 +119,11 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     - i is a zero-based index into ContactPairs (Python convention).
     - ContactPairs fields are numpy arrays (struct-like object from Oct2Py or dict-like).
     """
-    FricFac = FEMod.FricFac
+    FricFac = ContactPairs.FricFac
     I3 = np.eye(3)
     
     # --- current slave geometry & previous slave geometry ---
-    ip_idx = ContactPairs.SlaveIntegralPoint[i] - 1             # MATLAB->Python index
-    CurIP = IntegralPoint[ip_idx, :].astype(np.float64)                                 # shape (2,)
+    CurIP = IntegralPoint[ContactPairs.SlaveIntegralPoint[i], :].astype(np.float64)                                 # shape (2,)
 
     Na, dNa = GetSurfaceShapeFunction(CurIP)
     CurSlaveSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i] - 1)
@@ -230,8 +229,7 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
 
 def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):    
     # --- slave geometry at current IP ---
-    ip_idx = int(ContactPairs.SlaveIntegralPoint[i]) - 1
-    CurIP = IntegralPoint[ip_idx, :]
+    CurIP = IntegralPoint[ContactPairs.SlaveIntegralPoint[i], :]
     Na, dNa = GetSurfaceShapeFunction(CurIP)
     CurSlaveSurfXYZ, SlaveSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i].astype(np.int64) - 1)
 
@@ -269,8 +267,7 @@ def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integ
 def decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IP, FricFac, SlaveSurfXYZ, SlavePoint, SlavePointsFrame):
     # --- Case 2: possible stick/slip contact ---
     # ensure integer index when indexing IntegralPoint (ContactPairs stores 1..4)
-    ip_idx = ContactPairs.SlaveIntegralPoint[i].astype(np.int64) - 1
-    CurIP = IP[ip_idx]        # shape (2,)
+    CurIP = IP[ContactPairs.SlaveIntegralPoint[i],:]        # shape (2,)
     Na, dNa = GetSurfaceShapeFunction(CurIP)
     
     Cur_x1 = SlavePoint
@@ -305,13 +302,13 @@ def decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IP, FricFac, SlaveS
 def get_master_slave_XYZ(FEMod, ContactPairs, Disp): # integral points already chosen
     nPairs = ContactPairs.SlaveSurf.shape[1]
     SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
-    MasterSurfXYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in FEMod.master_surf_cells]).reshape((-1,4,3)) # redudant computations
+    MasterSurfXYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in ContactPairs.master_surf_cells]).reshape((-1,4,3)) # redudant computations
     
-    SlaveSurfXYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in FEMod.slave_surf_cells]) # 120x4x3
+    SlaveSurfXYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in ContactPairs.slave_surf_cells]) # 120x4x3
     SlavePoints = np.empty((nPairs, 3))
     SlavePointsFrame = np.empty((nPairs, 3, 3)) # (:, [normal, t1, t2], ndim) not the best convention
     
-    for i in range(FEMod.slave_surf_cells.shape[0]):
+    for i in range(ContactPairs.slave_surf_cells.shape[0]):
         for j in range(4):
             ipair = 4*i + j
             SlavePoints[ipair, :] = SlaveSurfXYZ[i].T@FEMod.ShpfSurf[j][0]

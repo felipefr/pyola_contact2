@@ -7,13 +7,14 @@ Created on Fri Oct 31 14:01:20 2025
 """
 
 import numpy as np
+from utils import *
 
 class ContactPairs:
     """
     ContactPairs - Class to hold and initialize contact pair data for a FEM model.
     """
 
-    def __init__(self, FEMod, nGauss=4):
+    def __init__(self, FEMod, nGauss=4, FricFac = 0.0, master_surf_id = 0, slave_surf_id = 1):
         """
         Initialize a ContactPairs object from a FEM model.
 
@@ -24,8 +25,28 @@ class ContactPairs:
         nGauss : int, optional
             Number of Gauss points per slave surface element (default=4)
         """
+        
+        self.FricFac = FricFac 
+        
+        
+        self.SlaveSurf_mesh = FEMod.facets[slave_surf_id]
+        self.MasterSurf_mesh = FEMod.facets[master_surf_id] 
+        
+        self.nMasterSurf = self.MasterSurf_mesh.shape[1]
+        self.master_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[self.MasterSurf_mesh[0, i], :], 
+                                                            self.MasterSurf_mesh[1, i]) 
+                                            for i in range(self.nMasterSurf)], dtype = np.int64) 
+        
+        self.nSlaveSurf = self.SlaveSurf_mesh.shape[1]
+        self.slave_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[self.SlaveSurf_mesh[0, i], :], 
+                                                            self.SlaveSurf_mesh[1, i]) 
+                                            for i in range(self.nSlaveSurf)], dtype = np.int64)   
+        
+        self.master_surf_nodes = np.setdiff1d(self.master_surf_cells.flatten(), [])
 
-        nSlave = FEMod.SlaveSurf.shape[1]
+        
+        
+        nSlave = self.SlaveSurf_mesh.shape[1]
         nPairs = nSlave * nGauss
 
         # --- Initialize arrays ---
@@ -50,8 +71,8 @@ class ContactPairs:
         for i in range(nSlave):
             for j in range(nGauss):
                 k = i * nGauss + j
-                self.SlaveSurf[:, k] = FEMod.SlaveSurf[:, i]
-                self.SlaveIntegralPoint[k] = j + 1  # keep MATLAB-style 1-based Gauss index
+                self.SlaveSurf[:, k] = self.SlaveSurf_mesh[:, i] + 1
+                self.SlaveIntegralPoint[k] = j # keep MATLAB-style 1-based Gauss index
                 
     def update_contact(self):
         """
@@ -85,6 +106,5 @@ class ContactPairs:
             self.CurMasterSurf[:, i] = 0
             self.CurContactState[i] = 0
     
-
 
 

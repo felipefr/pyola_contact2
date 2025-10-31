@@ -54,7 +54,7 @@ def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
     return rs, Exist, g
 
 
-def GetContactPointbyRayTracing(FEMod, Disp, SlavePoint, SlavePointFrame, MasterSurfXYZ, tree, method = "newton"):
+def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePointFrame, MasterSurfXYZ, tree, method = "newton"):
     """
     Obtain master surface contact point by ray tracing.
     FEMod numbering follows MATLAB (1-based)
@@ -63,14 +63,14 @@ def GetContactPointbyRayTracing(FEMod, Disp, SlavePoint, SlavePointFrame, Master
     SlavePoint_ = SlavePoint.flatten().astype(np.float64)
     Eles = FEMod.cells
     Nodes = FEMod.X
-    MasterSurf = FEMod.MasterSurf - 1
-    master_surf_cells = FEMod.master_surf_cells 
-    master_surf_nodes = FEMod.master_surf_nodes
+    MasterSurf = ContactPairs.MasterSurf_mesh 
+    master_surf_cells = ContactPairs.master_surf_cells 
+    master_surf_nodes = ContactPairs.master_surf_nodes
     
     MinMasterPoint = master_surf_nodes[ tree.query(SlavePoint_.reshape((1,3)))[1][0] ]
     
     # --- Determine candidate master surfaces ---
-    AllMinMasterSurfNum = np.where(FEMod.master_surf_cells  == MinMasterPoint)[0]
+    AllMinMasterSurfNum = np.where(ContactPairs.master_surf_cells  == MinMasterPoint)[0]
     ContactCandidate = np.zeros((AllMinMasterSurfNum.shape[0], 6))
     ContactCandidate[:,4] = 1e7 # reserved for the gap
     
