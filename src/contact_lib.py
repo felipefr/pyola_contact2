@@ -267,6 +267,7 @@ def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integ
 def decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IP, FricFac, SlaveSurfXYZ, SlavePoint, SlavePointsFrame):
     # --- Case 2: possible stick/slip contact ---
     # ensure integer index when indexing IntegralPoint (ContactPairs stores 1..4)
+
     CurIP = IP[ContactPairs.SlaveIntegralPoint[i],:]        # shape (2,)
     Na, dNa = GetSurfaceShapeFunction(CurIP)
     
