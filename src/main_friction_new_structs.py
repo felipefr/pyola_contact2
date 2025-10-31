@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Oct 29 14:43:27 2025
-
-@author: felipe
-"""
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Oct  8 17:12:15 2025
+Created on Fri Oct 31 12:51:05 2025
 
 @author: frocha
 """
 
+
 import numba
 numba.set_num_threads(40)
     
-from oct2py import octave
+#sfrom oct2py import octave
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
@@ -25,11 +18,11 @@ from fem_lib import *
 from contact_lib import *
 from utils import *
 from timeit import default_timer as timer
+from mesh import Mesh
+from contact_pairs import ContactPairs
 
-
-
-# octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
-octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
+# # octave.addpath(octave.genpath("/home/felipe/UPEC/Bichon/codes/ContactFEA/"))  # doctest: +SKIP
+# octave.addpath(octave.genpath("/home/frocha/sources/pyola_contact2/src/matlab/"))  # doctest: +SKIP
 
 # --- Parameters ---
 Tmax = 0.15
@@ -39,9 +32,7 @@ tolNR = 1e-7
 TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
-FEMod = octave.ModelInformation_Beam()
-modify_FEMod(FEMod)
-
+FEMod = Mesh('Beam.inp')
 FEMod.FricFac = 0.1
 
 # --- Material ---
@@ -49,13 +40,15 @@ E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
 Dtan= get_isotropic_celas(E, nu);
 
 # --- Contact ---
-contactPairs = InitializeContactPairs(FEMod)
+# contactPairs = InitializeContactPairs(FEMod)
+contactPairs = ContactPairs(FEMod)
 
 NodeNum, Dim = FEMod.X.shape
 AllDOF = Dim * NodeNum
 
 FixDOF = Dim * (FEMod.Cons[:, 0] - 1) + FEMod.Cons[:, 1] - 1 
-FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF)
+FixDOF = FixDOF.astype(np.int64)
+FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF).astype(np.int64)
 
 start = timer()
 # --- Main loop ---
@@ -107,8 +100,7 @@ for i in range(Nit - 1):
 
         # Check convergence
         if normRes < tolNR:
-            # contactPairs = octave.updateContact(contactPairs, nout = 1)
-            updateContact(contactPairs)
+            contactPairs.update_contact()
             break
         
         # Newton–Raphson update

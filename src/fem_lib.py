@@ -14,7 +14,7 @@ import numba as nb
 from numba import njit, float64, int64
 from utils import *
 
-
+# developements moved to Mesh class (it will be deleted)
 def modify_FEMod(FEMod):
     FEMod.cells = FEMod.Eles.astype(np.int64)-1
     FEMod.X = FEMod.Nodes.astype(np.float64)

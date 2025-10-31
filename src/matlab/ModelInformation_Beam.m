@@ -16,6 +16,7 @@ SlaveSurf=[1:4:477;6*ones(1,size([1:4:477],2))];
 FricFac=0.0;
 FEMod=struct('Nodes',Nodes,'Eles',Eles,'Prop',Prop,'ExtF',ExtF,'Cons',Cons,'MasterSurf',MasterSurf,'SlaveSurf',SlaveSurf,'FricFac',FricFac);
 end
+
 function [nodes, ele] = ReadMesh( fname )%Obtain node and element from ".inp" 
 fid = fopen(fname,'rt');S = textscan(fid,'%s','Delimiter','\n'); S = S{1};
 idxS = strfind(S, 'Node'); idx1 = find(not(cellfun(@isempty, idxS)));
