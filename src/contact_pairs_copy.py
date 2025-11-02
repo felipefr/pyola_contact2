@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Created on Sun Nov  2 09:46:55 2025
+
+@author: felipe
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
 Created on Fri Oct 31 14:01:20 2025
 
 @author: frocha
@@ -37,12 +45,12 @@ from numba.experimental import jitclass
 
 # @jitclass(spec)
 class SlavePointData:
-    def __init__(self, idx, surf, surf_facet, idxIP, penc = 1e6):
+    def __init__(self, idx):
         self.idx = idx
-        self.surf = surf # SlaveSurf[0]
-        self.surf_facet = surf_facet # SlaveSurf[1] should be removed
-        self.idxIP = idxIP # SlaveIntegrationPoint
-        self.penc = penc
+        self.penc = 1e6 # pc
+        self.surf = 0 # SlaveSurf[0]
+        self.surf_facet = 0 # SlaveSurf[1] should be removed
+        self.idxIP = 0 # SlaveIntegrationPoint
         
         self.master_surf = -1 # CurMasterSurf[0]
         self.master_surf_facet = -1 # CurMasterSurf[1] should be removed
@@ -144,50 +152,57 @@ class ContactPairs:
         self.master_surf_nodes = np.setdiff1d(self.master_surf_cells.flatten(), [])
 
         nSlave = self.SlaveSurf_mesh.shape[1]
+        nPairs = nSlave * nGauss
 
-        self.slave_points = []
+        # --- Initialize arrays ---
+        self.pc  = 1e6 * np.ones(nPairs) # penalisation
+        self.SlaveSurf = np.zeros((2, nPairs), dtype=np.int64)
+        self.SlaveIntegralPoint = np.zeros(nPairs, dtype=np.int64)
+
+        self.CurMasterSurf = np.zeros((2, nPairs), dtype=np.int64)
+        self.rc = np.zeros(nPairs)
+        self.sc = np.zeros(nPairs)
+        self.Cur_g = np.zeros(nPairs)
+        self.Pre_g = np.zeros(nPairs)
+        self.PreMasterSurf = np.zeros((2, nPairs), dtype=np.int64)
+        self.rp = np.zeros(nPairs)
+        self.sp = np.zeros(nPairs)
+        self.CurContactState = np.zeros(nPairs, dtype=np.int64)
+        self.PreContactState = np.zeros(nPairs, dtype=np.int64)
+        self.Pressure = np.zeros(nPairs)
+        self.Traction = np.zeros(nPairs)
+
+        # --- Populate fields based on Gauss integration ---
         for i in range(nSlave):
             for j in range(nGauss):
-                k = i*nGauss + j
-                self.slave_points.append(SlavePointData(k, self.SlaveSurf_mesh[0,i], self.SlaveSurf_mesh[1,i], j))
+                k = i * nGauss + j
+                self.SlaveSurf[:, k] = self.SlaveSurf_mesh[:, i] + 1 # keep MATLAB-style 1-based Gauss index
+                self.SlaveIntegralPoint[k] = j 
+                
+        self.slave_points = []
+        for i in range(nPairs):
+            self.slave_points.append(SlavePointData(i))
     
     def update_master_slave_XYZ(self, FEMod, Disp):
         self.master_surf_XYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in self.master_surf_cells]).reshape((-1,4,3)) 
         self.slave_surf_XYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in self.slave_surf_cells]).reshape((-1,4,3))  # 120x4x3
 
     def get_contact_dofs(self, FEMod, i):
+        # MasterSurfNodes = GetSurfaceNode(FEMod.cells[self.CurMasterSurf[0,i] - 1, :], 
+        #                                              self.CurMasterSurf[1,i] - 1 )
+        # MasterSurfDOF = get_dofs_given_nodes_ids(MasterSurfNodes)
+
+        # SlaveSurfNodes = GetSurfaceNode(FEMod.cells[self.SlaveSurf[0,i]-1, :], 
+        #                                             self.SlaveSurf[1,i]-1) 
+        
+        # SlaveSurfDOF = get_dofs_given_nodes_ids(SlaveSurfNodes)
+
+        # contact_dofs = np.concatenate([np.asarray(SlaveSurfDOF), 
+        #                              np.asarray(MasterSurfDOF)])
+            
         contact_dofs = np.concatenate([self.slave_points[i].surf_dofs, 
                                        self.slave_points[i].master_surf_dofs])
         return contact_dofs            
-
-    def update_history_slave_points(self):
-        """
-        Update contact history between time steps.
-        """
-        for sp in self.slave_points:
-            if sp.contact_state == 0:
-                # --- No contact ---
-                sp.master_surf_old = -1
-                sp.master_surf_facet_old = -1
-                sp.Xi_old.fill(0.)
-                sp.contact_state_old = 0
-                sp.gap_old = 0.0
-                sp.pressure = 0.0
-                sp.traction = 0.0
-            else:
-                # --- Slip or stick contact ---
-                sp.master_surf_old  = sp.master_surf
-                sp.master_surf_facet_old  = sp.master_surf_facet
-                sp.Xi_old[:] = sp.Xi[:]
-                sp.contact_state_old = sp.contact_state
-                sp.gap_old = sp.gap
-
-            # --- Reset current step quantities ---
-            sp.Xi.fill(0.)
-            sp.gap = 0.0
-            sp.master_surf = -1
-            sp.master_surf_facet = -1
-            sp.contact_state = 0
 
     def update_contact(self):
         """
@@ -221,6 +236,34 @@ class ContactPairs:
             self.CurMasterSurf[:, i] = 0
             self.CurContactState[i] = 0
             
+    def update_history_slave_points(self):
+        """
+        Update contact history between time steps.
+        """
+        for sp in self.slave_points:
+            if sp.contact_state == 0:
+                # --- No contact ---
+                sp.master_surf_old = -1
+                sp.master_surf_facet_old = -1
+                sp.Xi_old.fill(0.)
+                sp.contact_state_old = 0
+                sp.gap_old = 0.0
+                sp.pressure = 0.0
+                sp.traction = 0.0
+            else:
+                # --- Slip or stick contact ---
+                sp.master_surf_old  = sp.master_surf
+                sp.master_surf_facet_old  = sp.master_surf_facet
+                sp.Xi_old[:] = sp.Xi[:]
+                sp.contact_state_old = sp.contact_state
+                sp.gap_old = sp.gap
+
+            # --- Reset current step quantities ---
+            sp.Xi.fill(0.)
+            sp.gap = 0.0
+            sp.master_surf = -1
+            sp.master_surf_facet = -1
+            sp.contact_state = 0
     
     def copy_state_arrays2slavepoints(self):
         copy_arrays_to_slave_points(self.slave_points, 
@@ -233,16 +276,6 @@ class ContactPairs:
 
     def copy_state_slavepoints2arrays(self):
         copy_slave_points_to_arrays(self.slave_points, 
-                                     self.pc, self.SlaveSurf, self.SlaveIntegralPoint,
-                                     self.CurMasterSurf, self.rc, self.sc, self.Cur_g, self.Pre_g,
-                                     self.PreMasterSurf, self.rp, self.sp,
-                                     self.CurContactState, self.PreContactState,
-                                     self.Pressure, self.Traction)    
-        
-
-
-    def assert_state(self):
-        assert_slave_points_equal_arrays(self.slave_points, 
                                      self.pc, self.SlaveSurf, self.SlaveIntegralPoint,
                                      self.CurMasterSurf, self.rc, self.sc, self.Cur_g, self.Pre_g,
                                      self.PreMasterSurf, self.rp, self.sp,
@@ -333,52 +366,5 @@ def copy_slave_points_to_arrays(slave_points,
         Pressure[k] = p.pressure
         Traction[k] = p.traction
 
-
-def assert_slave_points_equal_arrays(
-    slave_points, 
-    pc, SlaveSurf, SlaveIntegralPoint,
-    CurMasterSurf, rc, sc, Cur_g, Pre_g,
-    PreMasterSurf, rp, sp,
-    CurContactState, PreContactState,
-    Pressure, Traction,
-):
-    """
-    Assert that the data stored in each SlavePointData object
-    matches the corresponding entries in the original arrays.
-    """
-    nPairs = len(pc)
-    assert len(slave_points) == nPairs, "Mismatch in number of slave points"
-
-    for k in range(nPairs):
-        p = slave_points[k]
-
-        # Scalars
-        assert p.penc == pc[k], f"penc mismatch at {k}"
-        assert p.surf == SlaveSurf[0, k] - 1, f"surf mismatch at {k}"
-        assert p.surf_facet == SlaveSurf[1, k] - 1, f"surf_facet mismatch at {k}"
-        assert p.idxIP == SlaveIntegralPoint[k], f"idxIP mismatch at {k}"
-
-        assert p.master_surf == CurMasterSurf[0, k] - 1, f"master_surf mismatch at {k}"
-        assert p.master_surf_facet == CurMasterSurf[1, k] - 1, f"master_surf_facet mismatch at {k}"
-        assert p.master_surf_old == PreMasterSurf[0, k] - 1, f"master_surf_old mismatch at {k}"
-        assert p.master_surf_facet_old == PreMasterSurf[1, k] - 1, f"master_surf_facet_old mismatch at {k}"
-
-        # Coordinates
-        assert p.Xi[0] == rc[k], f"Xi[0] mismatch at {k}"
-        assert p.Xi[1] == sc[k], f"Xi[1] mismatch at {k}"
-        assert p.Xi_old[0] == rp[k], f"Xi_old[0] mismatch at {k}"
-        assert p.Xi_old[1] == sp[k], f"Xi_old[1] mismatch at {k}"
-
-        # Gaps
-        assert p.gap == Cur_g[k], f"gap mismatch at {k}"
-        assert p.gap_old == Pre_g[k], f"gap_old mismatch at {k}"
-
-        # States
-        assert p.contact_state == CurContactState[k], f"contact_state mismatch at {k}"
-        assert p.contact_state_old == PreContactState[k], f"contact_state_old mismatch at {k}"
-
-        # Response
-        assert p.pressure == Pressure[k], f"pressure mismatch at {k}"
-        assert p.traction == Traction[k], f"traction mismatch at {k}"
 
 

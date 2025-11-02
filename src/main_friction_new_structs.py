@@ -83,7 +83,6 @@ for i in range(Nit - 1):
         contactPairs, GKF, Residual = CalculateContactKandF(
             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
-        
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:
             LOC = Dim * (FEMod.ExtF[:, 0].astype(int) - 1) + FEMod.ExtF[:, 1].astype(int) - 1  # convert to 0-based
@@ -105,7 +104,8 @@ for i in range(Nit - 1):
 
         # Check convergence
         if normRes < tolNR:
-            contactPairs.update_contact()
+            # contactPairs.update_contact()
+            contactPairs.update_history_slave_points()
             break
         
         # Newton–Raphson update

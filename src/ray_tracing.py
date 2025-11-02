@@ -53,7 +53,7 @@ def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
 
     return rs, Exist, g
 
-
+# Todo : remove depedence of ContactPairs
 def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePointFrame, MasterSurfXYZ, tree, method = "newton"):
     """
     Obtain master surface contact point by ray tracing.
@@ -94,8 +94,8 @@ def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePoin
     Exist = int(np.max(ContactCandidate[:, -1]))
     if Exist == 0 or Exist == 1:
         idxmin = np.argmin(ContactCandidate[:, 4])
-        MasterEle = ContactCandidate[idxmin, 0] + 1
-        MasterSign = ContactCandidate[idxmin, 1] + 1
+        MasterEle = ContactCandidate[idxmin, 0]
+        MasterSign = ContactCandidate[idxmin, 1]
         rr = ContactCandidate[idxmin, 2]
         ss = ContactCandidate[idxmin, 3]
         gg = ContactCandidate[idxmin, 4]
@@ -106,7 +106,7 @@ def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePoin
         ss = 1e10
         gg = 1e10
 
-    return rr, ss, MasterEle, MasterSign, gg, Exist
+    return rr, ss, int(MasterEle), int(MasterSign), gg, Exist
 
 @numba.jit(nopython=True, cache=True)
 def raytracing_moller_trumbore_tri(o, d, v0, v1, v2, eps=1e-9):

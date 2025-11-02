@@ -22,120 +22,101 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
     Conservative, minimal-fix translation of the MATLAB DetermineContactState.
     Only small indexing/shape fixes applied (int casts, no reshape).
     """
-    # --- Integration points (2x2 Gauss)
-    gp = 1.0 / np.sqrt(3.0)
-    IntegralPoint = np.array([
-        [-gp, -gp],
-        [ gp, -gp],
-        [ gp,  gp],
-        [-gp,  gp]], dtype = np.float64)
+    # MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame = get_master_slave_XYZ(FEMod, ContactPairs, Disp)
+    ContactPairs.update_master_slave_XYZ(FEMod, Disp)
+    for sp in ContactPairs.slave_points:
+        sp.update(FEMod, Disp)
 
+    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)))
     
-
-    MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame = get_master_slave_XYZ(FEMod, ContactPairs, Disp)
-    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)), 
-                                 MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame)
-    # support both dict-like and attribute-style FEMod
+    # ContactPairs.copy_state_arrays2slavepoints()
+    for sp in ContactPairs.slave_points:
+        sp.update(FEMod, Disp)
+        
     FricFac = ContactPairs.FricFac
     
-    nPairs = ContactPairs.SlaveSurf.shape[1]
-    
     # --- Loop over contact pairs
-    for i in range(nPairs):
-
+    for i, sp in enumerate(ContactPairs.slave_points):
         # Check for active contact
-        if ContactPairs.CurMasterSurf[0, i] == 0:
+        if sp.master_surf == -1:    
             continue  # No contact
 
         # Case 1: first contact or frictionless contact
-        if (FricFac == 0) or (ContactPairs.PreMasterSurf[0, i] == 0):
-            ContactPairs.CurContactState[i] = 2  # Slip
+        if (FricFac == 0) or (sp.master_surf_old == -1): # ContactPairs.PreMasterSurf[0, i] == 0)
+            sp.contact_state = 2  # Slip
         else:
-            ContactPairs.CurContactState[i] = decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IntegralPoint, FricFac, 
-                              SlaveSurfXYZ[int(i/4)], SlavePoints[i], SlavePointsFrame[i])
+            sp.contact_state = decide_stick_slip(sp, FricFac)
             
-        if(ContactPairs.CurContactState[i] == 2): # slip
-            KL, ResL, ContactPairs = CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, 
-                                                                        Disp, IntegralPoint)
-
-        elif(ContactPairs.CurContactState[i] == 1): # stick
-            KL, ResL, ContactPairs = CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, 
-                                                                        Disp, IntegralPoint)
-
-        MasterSurfNodes = GetSurfaceNode(FEMod.cells[ContactPairs.CurMasterSurf[0,i] - 1, :], 
-                                                     ContactPairs.CurMasterSurf[1,i] - 1 )
-        MasterSurfDOF = get_dofs_given_nodes_ids(MasterSurfNodes)
-
-        SlaveSurfNodes = GetSurfaceNode(FEMod.cells[ContactPairs.SlaveSurf[0,i]-1, :], 
-                                                    ContactPairs.SlaveSurf[1,i]-1) 
+        if(sp.contact_state == 1): # stick
+            KL, ResL, ContactPairs = CalculateContactKandF_stick(sp, FEMod, ContactPairs)
         
-        SlaveSurfDOF = get_dofs_given_nodes_ids(SlaveSurfNodes)
+        elif(sp.contact_state == 2): # slip    
+            sp.update_old(FEMod, PreDisp)
+            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)   
 
-        ContactDOF = np.concatenate([np.asarray(SlaveSurfDOF), 
-                                     np.asarray(MasterSurfDOF)])
-        
-        Residual[ContactDOF] += ResL
-        GKF[np.ix_(ContactDOF, ContactDOF)] += KL
+        dofs = ContactPairs.get_contact_dofs(FEMod, i)
+        Residual[dofs] += ResL
+        GKF[np.ix_(dofs, dofs)] += KL
             
     return ContactPairs, GKF, Residual
 
-def ContactSearch(FEMod, ContactPairs, Disp, MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame):
-    """
-    ContactSearch - conservative translation from MATLAB
-    (GetContactPointbyRayTracing still in Octave, 1-based safe)
-    """
-    
+def ContactSearch(FEMod, ContactPairs, Disp):
     method = "newton"
 
     MasterSurfNodeXYZ = get_deformed_position(ContactPairs.master_surf_nodes, FEMod.X, Disp) # redudant computations
     tree = cKDTree(MasterSurfNodeXYZ)
     
-    for i in range(ContactPairs.slave_surf_cells.shape[0]):        
-        for j in range(4): # gauss point number
-            ipair = 4*i + j
-            rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
-                FEMod, ContactPairs, Disp, SlavePoints[ipair,:], SlavePointsFrame[ipair,:,:], MasterSurfXYZ, tree, method)
-            
-            
-            if Exist == 1:
-                ContactPairs.CurMasterSurf[:, ipair] = np.array([MasterEle, MasterSign])
-                ContactPairs.rc[ipair] = rr
-                ContactPairs.sc[ipair] = ss
-                ContactPairs.Cur_g[ipair] = gg
-            else:
-                # print("contact not found at ", i)
-                ContactPairs.CurMasterSurf[:, ipair] = 0 
-                ContactPairs.rc[ipair] = 0
-                ContactPairs.sc[ipair] = 0
-                ContactPairs.Cur_g[ipair] = 0
-                ContactPairs.CurContactState[ipair] = 0
+    for i, sp in enumerate(ContactPairs.slave_points):        
+        rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
+            FEMod, ContactPairs, Disp, sp.point, sp.frame, 
+            ContactPairs.master_surf_XYZ, tree, method)
+        
+        if Exist == 1:
+            sp.master_surf = MasterEle
+            sp.master_surf_facet = MasterSign
+            sp.Xi = np.array([rr, ss])
+            sp.gap = gg
+        else:
+            # print("contact not found at ", i)
+            sp.master_surf = -1
+            sp.master_surf_facet = -1 
+            sp.Xi.fill(0.)
+            sp.gap = 0.
 
     return ContactPairs
 
 
-def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):
+def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     """
     Python translation of the MATLAB CalculateFrictionlessContactKandF.
     - i is a zero-based index into ContactPairs (Python convention).
     - ContactPairs fields are numpy arrays (struct-like object from Oct2Py or dict-like).
     """
+    
     FricFac = ContactPairs.FricFac
     I3 = np.eye(3)
     
-    # --- current slave geometry & previous slave geometry ---
-    CurIP = IntegralPoint[ContactPairs.SlaveIntegralPoint[i], :].astype(np.float64)                                 # shape (2,)
-
-    Na, dNa = GetSurfaceShapeFunction(CurIP)
-    CurSlaveSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i] - 1)
-    PreSlaveSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.SlaveSurf[:, i] - 1)
+    Na, dNa = FEMod.ShpfSurf[sp.idxIP]
+    Cur_x1 = sp.point
+    Cur_NXa = sp.frame[1:3]
+    Cur_N1Xa, Cur_N2Xa = Cur_NXa
+    Cur_n = sp.frame[0]
+    J1 = sp.J 
+    Pre_N1Xa, Pre_N2Xa, Pre_x1 = sp.frame_old[1], sp.frame_old[2], sp.point_old
     
-    # geometric quantities
-    Cur_n, J1, Cur_N1Xa, Cur_N2Xa, Cur_x1 = get_surface_geometry(Na, dNa, CurSlaveSurfXYZ)
-    _, _, Pre_N1Xa, Pre_N2Xa, Pre_x1 = get_surface_geometry(Na, dNa, PreSlaveSurfXYZ)
+    # --- master geometry at current geo, with current and previous steps ---
+    Cur_x2 = sp.master_point
+    Nb = sp.Nb
+    dNb = sp.dNb
+    Cur_NXb = sp.master_tangent
+    Cur_N1Xb, Cur_N2Xb = Cur_NXb
+    Cur_x2 = sp.master_point
+    Pre_x2 = sp.master_point_old
 
     # normal traction
-    tn = ContactPairs.Cur_g[i] * ContactPairs.pc[i]
+    tn = sp.penc * sp.gap 
 
+    # projection at slave
     dx1 = Cur_x1 - Pre_x1
     PN = I3 - np.outer(Cur_n, Cur_n)
 
@@ -145,20 +126,10 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     c1 = (PN @ m1) / J1
 
     # --- master geometry at current and previous steps ---
-    Nb, dNb = GetSurfaceShapeFunction(np.array((ContactPairs.rc[i], ContactPairs.sc[i]), dtype = np.float64))
-    CurMasterSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.CurMasterSurf[:, i] - 1)
-    PreMasterSurfXYZ, _ = GetSurfaceXYZ(FEMod.cells, FEMod.X, PreDisp, ContactPairs.CurMasterSurf[:, i] - 1)
-    
-
-    _, _, Cur_N1Xb, Cur_N2Xb, Cur_x2 = get_surface_geometry(Nb, dNb, CurMasterSurfXYZ)
-    _, _, _, _, Pre_x2 = get_surface_geometry(Nb, dNb, PreMasterSurfXYZ)
-
     dx2 = Cur_x2 - Pre_x2
 
     # --- precompute projection matrices and related arrays ---    
     # Compute the 2x2 coupling matrix
-    Cur_NXa = np.vstack((Cur_N1Xa, Cur_N2Xa))  # shape (2, n)
-    Cur_NXb = np.vstack((Cur_N1Xb, Cur_N2Xb))  # shape (2, n)
     a_ab = np.linalg.inv(Cur_NXa @ Cur_NXb.T)  # inverse
     
     # Compute bar vectors (each row is g1/g2 vector)
@@ -189,10 +160,10 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     Mb2_bar = - np.hstack([np.outer(Cur_n, mb2_bar[:, k]) for k in range(4)])
 
     # Gbc: shape (4,4)
-    Gbc = ContactPairs.Cur_g[i] * (dNb.T @ a_ab @ dNa)   # result 4x4
+    Gbc = sp.gap * (dNb.T @ a_ab @ dNa)   # result 4x4
 
     # --- relative velocity and tangential direction ---
-    r1 = ContactPairs.Cur_g[i] * c1 + dx1 - dx2
+    r1 = sp.gap * c1 + dx1 - dx2
     vr = r1 / Dt
     s1_temp = PN.dot(vr)
 
@@ -206,89 +177,63 @@ def CalculateContactKandF_slip(FEMod, ContactPairs, Dt, PreDisp, i, Disp, Integr
     tv = tn * Cur_n
     
     # Assemble frictionless stiffness
-    KL = -get_frictionless_K(Na, Nb, ContactPairs.pc[i], tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1)
+    KL = -get_frictionless_K(Na, Nb, sp.penc, tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1)
     
     if FricFac != 0 and np.linalg.norm(s1) > 1e-8:        
         tv += tn* FricFac * s1
-        FrictionalK = get_frictional_K_slip(Na, Nb, ContactPairs.pc[i], tn, Ac, Mc1_bar, 
+        FrictionalK = get_frictional_K_slip(Na, Nb, sp.penc, tn, Ac, Mc1_bar, 
                                        Mb2_bar, Gbc, N1, N1_wave, J1, Cur_n, m1, 
                                        dg1_slave, dg2_slave, dNa, PN, vr, Dt, s1, r1, 
-                                       ContactPairs.Cur_g[i], FricFac, c1, N1_bar, mc1_bar, mb2_bar)
+                                       sp.gap, FricFac, c1, N1_bar, mc1_bar, mb2_bar)
     
         
         KL -= FrictionalK   
 
     ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
-    ContactPairs.Pressure[i]  = abs(tn)
-    ContactPairs.Traction[i] = np.linalg.norm(tv)
+    sp.pressure  = abs(tn)
+    sp.traction = np.linalg.norm(tv)
     
     return KL, ContactNodeForce, ContactPairs
 
 
 
-
-def CalculateContactKandF_stick(FEMod, ContactPairs, Dt, PreDisp, i, Disp, IntegralPoint):    
-    # --- slave geometry at current IP ---
-    CurIP = IntegralPoint[ContactPairs.SlaveIntegralPoint[i], :]
-    Na, dNa = GetSurfaceShapeFunction(CurIP)
-    CurSlaveSurfXYZ, SlaveSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.SlaveSurf[:, i].astype(np.int64) - 1)
-
-    Cur_x1 = CurSlaveSurfXYZ.T @ Na
-    Cur_NXa = dNa @ CurSlaveSurfXYZ
-
-    Cur_n = np.cross(Cur_NXa[0], Cur_NXa[1])
-    Cur_n /= np.linalg.norm(Cur_n)
-    J1 = np.linalg.norm(np.cross(Cur_NXa[0], Cur_NXa[1]))
-
-    # --- master geometry ---
-    Nb, _ = GetSurfaceShapeFunction(np.array([ContactPairs.rp[i], ContactPairs.sc[i]]))
-    CurMasterSurfXYZ_rpsp, MasterSurfDOF = GetSurfaceXYZ(FEMod.cells, FEMod.X, Disp, ContactPairs.PreMasterSurf[:, i].astype(np.int64) - 1)
-    Cur_x2_p = CurMasterSurfXYZ_rpsp.T @ Nb
-
+def CalculateContactKandF_stick(sp, FEMod, ContactPairs):    
+    Na, dNa = FEMod.ShpfSurf[sp.idxIP]
+    Cur_x1 = sp.point
+    Cur_NXa = sp.frame[1:3]
+    Cur_n = sp.frame[0]
+    J1 = sp.J 
+    Cur_x2_p = sp.master_point_oldgeo
+    Nb = sp.Nb_old
+    
     Cur_g1_hat_slave = TransVect2SkewSym(Cur_NXa[0])
     Cur_g2_hat_slave = TransVect2SkewSym(Cur_NXa[1])
     Ac = (np.kron(dNa[0].T, Cur_g2_hat_slave) - np.kron(dNa[1].T, Cur_g1_hat_slave)) / J1
        
     # --- relative sliding vector ---
     gs = Cur_x2_p - Cur_x1
-    tv = ContactPairs.pc[i] * gs    
+    tv = sp.penc * gs    
+    
     ContactNodeForce = assemble_contact_force(Na, Nb, J1, tv)   # 1D length 24
 
     # # --- stiffness ---
-    KL = -get_frictional_K_stick(Na, Nb, ContactPairs.pc[i], J1, tv, Ac, Cur_n)
-
+    KL = -get_frictional_K_stick(Na, Nb, sp.penc, J1, tv, Ac, Cur_n)
     
-    ContactPairs.Pressure[i] = abs(np.dot(tv, Cur_n))
-    ContactPairs.Traction[i] = np.linalg.norm(tv)
+    sp.pressure  = abs(np.dot(tv,Cur_n))
+    sp.traction = np.linalg.norm(tv)
     
     return KL, ContactNodeForce, ContactPairs 
 
-
-def decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IP, FricFac, SlaveSurfXYZ, SlavePoint, SlavePointsFrame):
+def decide_stick_slip(sp, FricFac):
     # --- Case 2: possible stick/slip contact ---
     # ensure integer index when indexing IntegralPoint (ContactPairs stores 1..4)
-
-    CurIP = IP[ContactPairs.SlaveIntegralPoint[i],:]        # shape (2,)
-    Na, dNa = GetSurfaceShapeFunction(CurIP)
-    
-    Cur_x1 = SlavePoint
-
-    # Master surface (previous) - Nb uses rp,sp which are already numeric
-    Nb, _ = GetSurfaceShapeFunction(np.array([ContactPairs.rp[i], ContactPairs.sp[i]]))
-    pre_master_surf = ContactPairs.PreMasterSurf[:, i].astype(np.int64) - 1 
-    MasterSurfNodes = GetSurfaceNode(FEMod.cells[pre_master_surf[0],:], pre_master_surf[1])
-    MasterSurfDOF = get_dofs_given_nodes_ids(MasterSurfNodes)
-    CurMasterSurfXYZ_p = get_deformed_position_given_dofs(MasterSurfNodes, FEMod.X, Disp, MasterSurfDOF)
-    Cur_x2_p = Nb @ CurMasterSurfXYZ_p
+    Cur_x1 = sp.point
+    Cur_n = sp.frame[0]
+    Cur_x2_p = sp.master_point_oldgeo # attention (it was computed in a strange way mixing old shape functions with current deformation)
 
     # Relative motion and projection
     gs = Cur_x2_p - Cur_x1
-    tv = ContactPairs.pc[i] * gs
-
-    # Current normal
-    Cur_NXa = dNa@SlaveSurfXYZ # (2,4),(4,3)-> (2,3)
-    Cur_n = np.cross(Cur_NXa[0], Cur_NXa[1])
-    Cur_n = Cur_n / np.linalg.norm(Cur_n)
+    tv = sp.penc * gs
 
     # Tangential/normal trial components
     tn_trial = abs(np.dot(tv, Cur_n))
@@ -298,24 +243,3 @@ def decide_stick_slip(FEMod, ContactPairs, Disp, PreDisp, i, IP, FricFac, SlaveS
     fai = tt_trial - FricFac * tn_trial
     
     return 1 if fai < 0 else 2
-
-
-def get_master_slave_XYZ(FEMod, ContactPairs, Disp): # integral points already chosen
-    nPairs = ContactPairs.SlaveSurf.shape[1]
-    SlaveSurf = ContactPairs.SlaveSurf.astype(np.int64) - 1
-    MasterSurfXYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in ContactPairs.master_surf_cells]).reshape((-1,4,3)) # redudant computations
-    
-    SlaveSurfXYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in ContactPairs.slave_surf_cells]) # 120x4x3
-    SlavePoints = np.empty((nPairs, 3))
-    SlavePointsFrame = np.empty((nPairs, 3, 3)) # (:, [normal, t1, t2], ndim) not the best convention
-    
-    for i in range(ContactPairs.slave_surf_cells.shape[0]):
-        for j in range(4):
-            ipair = 4*i + j
-            SlavePoints[ipair, :] = SlaveSurfXYZ[i].T@FEMod.ShpfSurf[j][0]
-            SlavePointsFrame[ipair, 1:3, :] = FEMod.ShpfSurf[j][1] @ SlaveSurfXYZ[i]
-            SlavePointsFrame[ipair, 0, :] = np.cross(SlavePointsFrame[ipair, 1, :], SlavePointsFrame[ipair, 2, :])
-            SlavePointsFrame[ipair, 0, :] /= np.linalg.norm(SlavePointsFrame[ipair, 0, :])
-
-    return MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame
-
