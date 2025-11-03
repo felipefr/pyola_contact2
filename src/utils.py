@@ -96,6 +96,38 @@ def get_surface_geometry(N, dN, SurfXYZ):
 
 
 @numba.jit(nopython=True, cache=True)
+def get_surface_frame(N, dN, SurfXYZ):
+    """
+    Compute surface geometry quantities from shape functions and nodal coordinates.
+
+    Parameters
+    ----------
+    N, dN : (n_nodes,)  and (2,n_nodes) arrays
+        Shape function and its derivatives with respect to local coordinates.
+    SurfXYZ : (n_nodes, 3) array
+        Nodal coordinates of the surface.
+
+    Returns
+    -------
+    n : (3,) array
+        Unit normal vector.
+    J : float
+        Surface Jacobian (norm of cross product).
+    N1X, N2X : (3,) arrays
+        Tangent vectors in local directions.
+    x : (3,) array
+        Current surface point coordinates.
+    """
+    
+    frame = np.empty((3, 3), dtype=np.float64) # (:, [normal, t1, t2], ndim) not the best convention
+    x = SurfXYZ.T@N
+    frame[1:3] = dN @ SurfXYZ #  tangents
+    frame[0] = np.cross(frame[1], frame[2]) # normal
+    J = np.linalg.norm(frame[0])
+    frame[0] /= J
+    return x, frame, J
+
+@numba.jit(nopython=True, cache=True)
 def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
     """
     GetSurfaceNode - Return the node indices defining a surface of a hexahedral element.
@@ -197,17 +229,15 @@ def GetSurfaceShapeFunction(rs):
     
     return N, dN
 
+# return deformed coordinates
 @numba.jit(nopython=True, cache=True)
 def get_deformed_position(nodes_ids, nodes, disp):
-    # Build DOF list
-    DOFs = get_dofs_given_nodes_ids(nodes_ids)
-    # return deformed coordinates
-    return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
+    return nodes[nodes_ids, :] + disp.reshape((-1,3))[nodes_ids, :] 
 
+# return deformed coordinates
 @numba.jit(nopython=True, cache=True)
-def get_deformed_position_given_dofs(nodes_ids, nodes, disp, DOFs):
-    # return deformed coordinates
-    return nodes[nodes_ids, :] + disp[DOFs].reshape((nodes_ids.shape[0],3)) 
+def get_deformed_position_given_dofs(DOFs, nodes, disp):
+    return (nodes.reshape((-1,))[DOFs] + disp[DOFs]).reshape((-1,3)) 
 
 
 sig = 'float64[:,:](float64, float64)'

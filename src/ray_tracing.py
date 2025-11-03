@@ -30,7 +30,7 @@ def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
         # SlavePointTan is (3,2) , fai is (2,), SlavePoint and Nx are (3,)
         fai = SlavePointTan @ (SlavePoint - NX)
 
-        if j == 500: # failed to converge
+        if j == 100: # failed to converge
             rs[0] = 1e5
             return rs, -1, 1e7
 
@@ -61,10 +61,7 @@ def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePoin
     """
 
     SlavePoint_ = SlavePoint.flatten().astype(np.float64)
-    Eles = FEMod.cells
-    Nodes = FEMod.X
-    MasterSurf = ContactPairs.MasterSurf_mesh 
-    master_surf_cells = ContactPairs.master_surf_cells 
+    MasterSurf = ContactPairs.MasterSurf_mesh  
     master_surf_nodes = ContactPairs.master_surf_nodes
     
     MinMasterPoint = master_surf_nodes[ tree.query(SlavePoint_.reshape((1,3)))[1][0] ]

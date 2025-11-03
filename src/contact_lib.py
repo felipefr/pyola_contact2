@@ -22,17 +22,9 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
     Conservative, minimal-fix translation of the MATLAB DetermineContactState.
     Only small indexing/shape fixes applied (int casts, no reshape).
     """
-    # MasterSurfXYZ, SlaveSurfXYZ, SlavePoints, SlavePointsFrame = get_master_slave_XYZ(FEMod, ContactPairs, Disp)
-    ContactPairs.update_master_slave_XYZ(FEMod, Disp)
-    for sp in ContactPairs.slave_points:
-        sp.update(FEMod, Disp)
-
-    ContactPairs = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)))
     
-    # ContactPairs.copy_state_arrays2slavepoints()
-    for sp in ContactPairs.slave_points:
-        sp.update(FEMod, Disp)
-        
+    ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)))
+
     FricFac = ContactPairs.FricFac
     
     # --- Loop over contact pairs
@@ -42,7 +34,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
             continue  # No contact
 
         # Case 1: first contact or frictionless contact
-        if (FricFac == 0) or (sp.master_surf_old == -1): # ContactPairs.PreMasterSurf[0, i] == 0)
+        if (FricFac == 0) or (sp.master_surf_old == -1): 
             sp.contact_state = 2  # Slip
         else:
             sp.contact_state = decide_stick_slip(sp, FricFac)
@@ -62,11 +54,13 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
 
 def ContactSearch(FEMod, ContactPairs, Disp):
     method = "newton"
-
+    
+    ContactPairs.update_master_slave_XYZ(FEMod, Disp)
     MasterSurfNodeXYZ = get_deformed_position(ContactPairs.master_surf_nodes, FEMod.X, Disp) # redudant computations
     tree = cKDTree(MasterSurfNodeXYZ)
     
-    for i, sp in enumerate(ContactPairs.slave_points):        
+    for i, sp in enumerate(ContactPairs.slave_points):  
+        sp.update_slave(FEMod, Disp)
         rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
             FEMod, ContactPairs, Disp, sp.point, sp.frame, 
             ContactPairs.master_surf_XYZ, tree, method)
@@ -76,6 +70,7 @@ def ContactSearch(FEMod, ContactPairs, Disp):
             sp.master_surf_facet = MasterSign
             sp.Xi = np.array([rr, ss])
             sp.gap = gg
+            sp.update_master(FEMod, Disp)
         else:
             # print("contact not found at ", i)
             sp.master_surf = -1
@@ -83,7 +78,6 @@ def ContactSearch(FEMod, ContactPairs, Disp):
             sp.Xi.fill(0.)
             sp.gap = 0.
 
-    return ContactPairs
 
 
 def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
@@ -109,12 +103,9 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Nb = sp.Nb
     dNb = sp.dNb
     Cur_NXb = sp.master_tangent
-    Cur_N1Xb, Cur_N2Xb = Cur_NXb
     Cur_x2 = sp.master_point
     Pre_x2 = sp.master_point_old
 
-    # normal traction
-    tn = sp.penc * sp.gap 
 
     # projection at slave
     dx1 = Cur_x1 - Pre_x1
@@ -174,6 +165,8 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
         dh = 0.0  # not used further here (kept for parity)
 
     # --- contact nodal force (frictionless baseline uses tv = tn * Cur_n) --
+    # normal traction
+    tn = sp.penc * sp.gap 
     tv = tn * Cur_n
     
     # Assemble frictionless stiffness

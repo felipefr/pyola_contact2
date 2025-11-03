@@ -37,7 +37,10 @@ from numba.experimental import jitclass
 
 # @jitclass(spec)
 class SlavePointData:
-    def __init__(self, idx, surf, surf_facet, idxIP, penc = 1e6):
+    master_surf_cells = None
+    
+    def __init__(self, FEMod, idx, surf, surf_facet, idxIP, penc = 1e6):
+        self.is_active = False
         self.idx = idx
         self.surf = surf # SlaveSurf[0]
         self.surf_facet = surf_facet # SlaveSurf[1] should be removed
@@ -60,51 +63,42 @@ class SlavePointData:
         
         self.pressure = 0.0 # Pressure
         self.traction = 0.0 # Traction
+
+        self.surf_nodes = GetSurfaceNode(FEMod.cells[self.surf, :], self.surf_facet)
+        self.surf_dofs = get_dofs_given_nodes_ids(self.surf_nodes)       
         
-    def update(self, FEMod, Disp): # integral points already chosen
-        self.surf_nodes = GetSurfaceNode(FEMod.cells[self.surf, :], self.surf_facet)  # todo: do once for all    
-        self.surf_dofs = get_dofs_given_nodes_ids(self.surf_nodes)
-        self.surfXYZ =  get_deformed_position_given_dofs(self.surf_nodes, FEMod.X, Disp, self.surf_dofs)
-        self.frame = np.empty((3, 3), dtype=np.float64) # (:, [normal, t1, t2], ndim) not the best convention
-        
-        self.point = self.surfXYZ.T@FEMod.ShpfSurf[self.idxIP][0]
-        self.frame[1:3] = FEMod.ShpfSurf[self.idxIP][1] @ self.surfXYZ #  tangents
-        self.frame[0] = np.cross(self.frame[1], self.frame[2]) # normal
-        self.J = np.linalg.norm(self.frame[0])
-        self.frame[0] /= self.J
-        
+    def update_slave(self, FEMod, Disp): # integral points already chosen
+        surfXYZ =  get_deformed_position(self.surf_nodes, FEMod.X, Disp)
+        self.point, self.frame, self.J = get_surface_frame(FEMod.ShpfSurf[self.idxIP][0], FEMod.ShpfSurf[self.idxIP][1], surfXYZ)
+    
+    def update_master(self, FEMod, Disp):
         # Master surface (previous) - Nb uses rp,sp which are already numeric
         self.Nb_old, _ = GetSurfaceShapeFunction(self.Xi_old)
         self.Nb, self.dNb = GetSurfaceShapeFunction(self.Xi)
         
         self.master_surf_nodes_old = GetSurfaceNode(FEMod.cells[self.master_surf_old,:], self.master_surf_facet_old)
-        self.master_surf_dofs_old = get_dofs_given_nodes_ids(self.master_surf_nodes_old)
         
         self.master_surf_nodes = GetSurfaceNode(FEMod.cells[self.master_surf,:], self.master_surf_facet)
         self.master_surf_dofs = get_dofs_given_nodes_ids(self.master_surf_nodes)
         
-        self.master_surf_XYZ_oldgeo = get_deformed_position_given_dofs(self.master_surf_nodes_old, FEMod.X, Disp, self.master_surf_dofs_old)
-        self.master_surf_XYZ = get_deformed_position_given_dofs(self.master_surf_nodes, FEMod.X, Disp, self.master_surf_dofs)
+        master_surf_XYZ_oldgeo = get_deformed_position(self.master_surf_nodes_old, FEMod.X, Disp)
+        master_surf_XYZ = get_deformed_position(self.master_surf_nodes, FEMod.X, Disp)
         
         # attention !! I think there is a bug in the assembling for the matlab version (copying as it is). note that oldgeo is different then old
-        self.master_point_oldgeo = self.Nb_old @ self.master_surf_XYZ_oldgeo 
-        self.master_point = self.Nb @ self.master_surf_XYZ
+        self.master_point_oldgeo = self.Nb_old @ master_surf_XYZ_oldgeo 
+        self.master_point = self.Nb @ master_surf_XYZ
         
-        self.master_tangent = self.dNb @ self.master_surf_XYZ # master tangents
+        self.master_tangent = self.dNb @ master_surf_XYZ # master tangents
         
         
     def update_old(self, FEMod, PreDisp):
-        self.surfXYZ_old =  get_deformed_position_given_dofs(self.surf_nodes, FEMod.X, PreDisp, self.surf_dofs)
-        self.frame_old = np.empty((3, 3), dtype=np.float64) # (:, [normal, t1, t2], ndim) not the best convention
-        
-        self.point_old = self.surfXYZ_old.T@FEMod.ShpfSurf[self.idxIP][0]
-        self.frame_old[1:3] = FEMod.ShpfSurf[self.idxIP][1] @ self.surfXYZ_old #  tangents
-        self.frame_old[0] = np.cross(self.frame_old[1], self.frame_old[2]) # normal
-        self.J_old = np.linalg.norm(self.frame_old[0]) # unused
-        self.frame_old[0] /= self.J_old # unused
+        self.surfXYZ_old =  get_deformed_position(self.surf_nodes, FEMod.X, PreDisp)
+        self.point_old, self.frame_old, self.J_old = get_surface_frame(FEMod.ShpfSurf[self.idxIP][0], 
+                                                                       FEMod.ShpfSurf[self.idxIP][1], 
+                                                                       self.surfXYZ_old)
         
         # Master surface (previous) - Nb uses rp,sp which are already numeric        
-        self.master_surf_XYZ_old = get_deformed_position_given_dofs(self.master_surf_nodes, FEMod.X, PreDisp, self.master_surf_dofs)
+        self.master_surf_XYZ_old = get_deformed_position(self.master_surf_nodes, FEMod.X, PreDisp)
         self.master_point_old = self.Nb @ self.master_surf_XYZ_old
         
     
@@ -149,11 +143,13 @@ class ContactPairs:
         for i in range(nSlave):
             for j in range(nGauss):
                 k = i*nGauss + j
-                self.slave_points.append(SlavePointData(k, self.SlaveSurf_mesh[0,i], self.SlaveSurf_mesh[1,i], j))
-    
+                self.slave_points.append(SlavePointData(FEMod, k, self.SlaveSurf_mesh[0,i], self.SlaveSurf_mesh[1,i], j))
+
+        SlavePointData.master_surf_cells = self.master_surf_cells
+        
     def update_master_slave_XYZ(self, FEMod, Disp):
-        self.master_surf_XYZ = np.array([ get_deformed_position(msc, FEMod.X, Disp) for msc in self.master_surf_cells]).reshape((-1,4,3)) 
-        self.slave_surf_XYZ =  np.array([ get_deformed_position(ssc, FEMod.X, Disp) for ssc in self.slave_surf_cells]).reshape((-1,4,3))  # 120x4x3
+        self.master_surf_XYZ = get_deformed_position(self.master_surf_cells.flatten(), FEMod.X, Disp).reshape((-1,4,3)) 
+        self.slave_surf_XYZ =  get_deformed_position(self.slave_surf_cells.flatten(), FEMod.X, Disp).reshape((-1,4,3))  # 120x4x3
 
     def get_contact_dofs(self, FEMod, i):
         contact_dofs = np.concatenate([self.slave_points[i].surf_dofs, 
