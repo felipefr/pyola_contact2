@@ -79,8 +79,8 @@ def ContactSearch(FEMod, ContactPairs, Disp):
             sp.gap = 0.
 
 
-
-def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
+# original version
+def CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt):
     """
     Python translation of the MATLAB CalculateFrictionlessContactKandF.
     - i is a zero-based index into ContactPairs (Python convention).
@@ -188,9 +188,89 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     
     return KL, ContactNodeForce, ContactPairs
 
+# My version: still does not converges
+# Rtilde has terms with different dimensions
+def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
+    """
+    Python translation of the MATLAB CalculateFrictionlessContactKandF.
+    - i is a zero-based index into ContactPairs (Python convention).
+    - ContactPairs fields are numpy arrays (struct-like object from Oct2Py or dict-like).
+    """
+    
+    FricFac = ContactPairs.FricFac
+    I3 = np.eye(3)
+    
+    Na, dNa = FEMod.ShpfSurf[sp.idxIP]
+    Cur_x1 = sp.point
+    Cur_NXa = sp.frame[1:3]
+    Cur_N1Xa, Cur_N2Xa = Cur_NXa
+    Cur_n = sp.frame[0]
+    J1 = sp.J 
+    Pre_N1Xa, Pre_N2Xa, Pre_x1 = sp.frame_old[1], sp.frame_old[2], sp.point_old
+    
+    # --- master geometry at current geo, with current and previous steps ---
+    Cur_x2 = sp.master_point
+    Nb = sp.Nb
+    dNb = sp.dNb
+    Cur_NXb = sp.master_tangent
+    Cur_x2 = sp.master_point
+    Pre_x2 = sp.master_point_old
 
+    Ngap = np.block([-np.kron(Na, I3), np.kron(Nb, I3)])
+    
+    # increments
+    dx1 = Cur_x1 - Pre_x1
+    dx2 = Cur_x2 - Pre_x2
+    gvec = Cur_x2 - Cur_x1
+    
+    # projection at slave
+    PN = I3 - np.outer(Cur_n, Cur_n)
+    Cur_g1_hat_slave = TransVect2SkewSym(Cur_NXa[0])
+    Cur_g2_hat_slave = TransVect2SkewSym(Cur_NXa[1])
+    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
+    # Ac = np.block([[-Cur_g2_hat_slave, Cur_g2_hat_slave]]) @ np.kron(dNa, I3)/J1 # different by a minus sign
+    PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
+    Ac_tilde = np.block([Ac, np.zeros((3,12))])     
 
-def CalculateContactKandF_stick(sp, FEMod, ContactPairs):    
+    # dg1_slave = Cur_N1Xa - Pre_N1Xa
+    # dg2_slave = Cur_N2Xa - Pre_N2Xa
+    # m1 = np.cross(dg1_slave, Cur_N2Xa) + np.cross(Cur_N1Xa, dg2_slave)
+    # c1 = (PN @ m1) / J1 # variation of the normal? Delta n?
+    c1 = Cur_n - sp.frame_old[0]
+    
+    # --- relative velocity and tangential direction ---
+    r1 = sp.gap * c1 + dx1 - dx2
+    vr = r1 / Dt
+    PNvr = PN.dot(vr)
+    PNvr_norm = np.linalg.norm(PNvr)
+    
+    if PNvr_norm > 1e-8:
+        s1 = PNvr / PNvr_norm
+        Ps = (I3 - np.outer(s1,s1))/PNvr_norm
+    else:
+        Ps = I3
+        s1 = np.zeros(3)
+        dh = 0.0  # not used further here (kept for parity)
+
+    Qvr = -np.outer(Cur_n, vr) - np.dot(Cur_n, vr)*I3
+    Rtilde = ((np.outer(c1, Cur_n) - I3) @ Ngap + (np.outer(c1, gvec) + sp.gap*I3)@PNAc_tilde)/Dt
+    Ds = Ps @ (Qvr@PNAc_tilde + Rtilde)
+    
+    tn = sp.penc * sp.gap 
+    tv = tn * (Cur_n +  FricFac * s1)
+    
+    Dtv = np.outer( sp.penc*tv/tn , Ngap.T@Cur_n + PNAc_tilde.T@gvec) + tn*PNAc_tilde + tn*FricFac*Ds 
+     
+    ContactNodeForce = -J1*Ngap.T@tv
+    KL = J1*Ngap.T@ (Dtv + np.outer(tv, Cur_n) @ Ac_tilde )
+
+    sp.pressure  = abs(tn)
+    sp.traction = np.linalg.norm(tv)
+    
+    return KL, ContactNodeForce, ContactPairs
+
+# Original version
+def CalculateContactKandF_stick2(sp, FEMod, ContactPairs):    
     Na, dNa = FEMod.ShpfSurf[sp.idxIP]
     Cur_x1 = sp.point
     Cur_NXa = sp.frame[1:3]
@@ -216,6 +296,40 @@ def CalculateContactKandF_stick(sp, FEMod, ContactPairs):
     sp.traction = np.linalg.norm(tv)
     
     return KL, ContactNodeForce, ContactPairs 
+
+
+
+# My version (it converges the same but with + for KL, weirdly)
+def CalculateContactKandF_stick(sp, FEMod, ContactPairs):  
+    I3 = np.eye(3)
+    Na, dNa = FEMod.ShpfSurf[sp.idxIP]
+    Cur_x1 = sp.point
+    Cur_NXa = sp.frame[1:3]
+    Cur_n = sp.frame[0]
+    J1 = sp.J 
+    Cur_x2_p = sp.master_point_oldgeo
+    Nb = sp.Nb_old
+    
+    Ngap = np.block([-np.kron(Na, I3), np.kron(Nb, I3)])
+    
+    Cur_g1_hat_slave = TransVect2SkewSym(Cur_NXa[0])
+    Cur_g2_hat_slave = TransVect2SkewSym(Cur_NXa[1])
+    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
+    Atilde = np.block([Ac, np.zeros((3,12))])
+    
+    # --- relative sliding vector ---
+    gs = Cur_x2_p - Cur_x1
+    tv = sp.penc * gs    
+    ContactNodeForce = -J1*Ngap.T@tv
+
+    # # --- stiffness ---
+    KL = sp.penc*J1*(Ngap.T @ Ngap + Ngap.T @ np.outer(gs,Cur_n) @ Atilde) # it should be + to match the original
+    
+    sp.pressure  = abs(np.dot(tv,Cur_n))
+    sp.traction = np.linalg.norm(tv)
+    
+    return KL, ContactNodeForce, ContactPairs 
+
 
 def decide_stick_slip(sp, FricFac):
     # --- Case 2: possible stick/slip contact ---
