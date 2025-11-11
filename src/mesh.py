@@ -37,14 +37,27 @@ class Mesh:
             for j in range(self.ndim):
                 self.Cons[3 * i + j, :] = [node, j, 0]
                 
-        # Contact boundaries
+        # Facets
         self.facets = []
-        for name, surf_id in facets_id:
-            facets =  m.cell_sets_dict[name][cell_type].astype(np.int64)
-            facets = np.vstack((facets, surf_id * np.ones_like(facets)))
-            self.facets.append(facets)
+        self.facets_cells = []
+        for f in facets_id:
+            
+            if(len(facets_id)==2):
+                name, surf_id = f
+                facets_cells =  m.cell_sets_dict[name][cell_type].astype(np.int64)
+                facets = np.array([ GetSurfaceNode(self.cells[fc, :], surf_id) 
+                                                    for fc in facets_cells], dtype = np.int64)
+                
+                facets_cells_ = np.vstack((facets_cells, surf_id * np.ones_like(facets_cells)))
+            
+                self.facets_cells.append(facets_cells_)
+                self.facets.append(facets)
+                    
+            elif(len(f)==1):
+                # not implemented (only self.facets should be appended)
+                pass
+                
 
-        
         gp = 1.0 / np.sqrt(3.0)
         self.SurfIPs = np.array([ [-gp, -gp], [ gp, -gp], [ gp,  gp], [-gp,  gp]], dtype = np.float64) 
         

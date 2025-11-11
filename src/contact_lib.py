@@ -32,7 +32,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
         sp = ContactPairs.slave_points[i]
 
         # Case 1: first contact or frictionless contact
-        if (FricFac == 0) or (sp.master_surf_old == -1): 
+        if (FricFac == 0) or (sp.master_surf_idx_old == -1): 
             sp.contact_state = 2  # Slip
         else:
             sp.contact_state = decide_stick_slip(sp, FricFac)
@@ -44,7 +44,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
             sp.update_old(FEMod, PreDisp)
             KL, ResL, ContactPairs = CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt)   
 
-        dofs = ContactPairs.get_contact_dofs(FEMod, i)
+        dofs = sp.get_contact_dofs()
         Residual[dofs] += ResL
         GKF[np.ix_(dofs, dofs)] += KL
             
@@ -61,21 +61,21 @@ def ContactSearch(FEMod, ContactPairs, Disp):
     
     for i, sp in enumerate(ContactPairs.slave_points):  
         sp.update_slave(FEMod, Disp)
-        rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
+        Master_idx, rr, ss, gg, Exist = GetContactPointbyRayTracing(
             FEMod, ContactPairs, Disp, sp.point, sp.frame, 
             ContactPairs.master_surf_XYZ, tree, method)
         
         if Exist == 1:
-            sp.master_surf = MasterEle
-            sp.master_surf_facet = MasterSign
+            sp.is_active = True
+            sp.master_surf_idx = Master_idx
             sp.Xi = np.array([rr, ss])
             sp.gap = gg
             sp.update_master(FEMod, Disp)
             idx_active.append(i)
         else:
             # print("contact not found at ", i)
-            sp.master_surf = -1
-            sp.master_surf_facet = -1 
+            sp.is_active = False
+            sp.master_surf_idx = -1
             sp.Xi.fill(0.)
             sp.gap = 0.
 

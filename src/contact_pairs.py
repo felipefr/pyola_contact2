@@ -39,18 +39,16 @@ from numba.experimental import jitclass
 class SlavePointData:
     master_surf_cells = None
     
-    def __init__(self, FEMod, idx, surf, surf_facet, idxIP, penc = 1e6):
+    def __init__(self, FEMod, idx, surf_idx, idxIP, surf_nodes, penc = 1e6):
         self.is_active = False
         self.idx = idx
-        self.surf = surf # SlaveSurf[0]
-        self.surf_facet = surf_facet # SlaveSurf[1] should be removed
+        self.surf_idx = surf_idx # SlaveSurf[0]
         self.idxIP = idxIP # SlaveIntegrationPoint
+        self.surf_nodes = surf_nodes
         self.penc = penc
         
-        self.master_surf = -1 # CurMasterSurf[0]
-        self.master_surf_facet = -1 # CurMasterSurf[1] should be removed
-        self.master_surf_old = -1 # PreMasterSurf[0]
-        self.master_surf_facet_old = -1 # PreMasterSurf[1] should be removed
+        self.master_surf_idx = -1
+        self.master_surf_idx_old = -1
         
         self.Xi = np.zeros(2, dtype = np.float64) # rc, sc
         self.Xi_old = np.zeros(2, dtype = np.float64) # rp, sp
@@ -63,8 +61,7 @@ class SlavePointData:
         
         self.pressure = 0.0 # Pressure
         self.traction = 0.0 # Traction
-
-        self.surf_nodes = GetSurfaceNode(FEMod.cells[self.surf, :], self.surf_facet)
+        
         self.surf_dofs = get_dofs_given_nodes_ids(self.surf_nodes)       
         
     def update_slave(self, FEMod, Disp): # integral points already chosen
@@ -76,13 +73,8 @@ class SlavePointData:
         self.Nb_old, _ = GetSurfaceShapeFunction(self.Xi_old)
         self.Nb, self.dNb = GetSurfaceShapeFunction(self.Xi)
         
-        self.master_surf_nodes_old = GetSurfaceNode(FEMod.cells[self.master_surf_old,:], self.master_surf_facet_old)
-        
-        self.master_surf_nodes = GetSurfaceNode(FEMod.cells[self.master_surf,:], self.master_surf_facet)
-        self.master_surf_dofs = get_dofs_given_nodes_ids(self.master_surf_nodes)
-        
-        master_surf_XYZ_oldgeo = get_deformed_position(self.master_surf_nodes_old, FEMod.X, Disp)
-        master_surf_XYZ = get_deformed_position(self.master_surf_nodes, FEMod.X, Disp)
+        master_surf_XYZ_oldgeo = get_deformed_position(self.master_surf_cells[self.master_surf_idx_old,:], FEMod.X, Disp)
+        master_surf_XYZ = get_deformed_position(self.master_surf_cells[self.master_surf_idx,:], FEMod.X, Disp)
         
         # attention !! I think there is a bug in the assembling for the matlab version (copying as it is). note that oldgeo is different then old
         self.master_point_oldgeo = self.Nb_old @ master_surf_XYZ_oldgeo 
@@ -96,10 +88,13 @@ class SlavePointData:
         self.point_old, self.frame_old, self.J_old = get_surface_frame(FEMod.ShpfSurf[self.idxIP][0], 
                                                                        FEMod.ShpfSurf[self.idxIP][1], 
                                                                        self.surfXYZ_old)
-        
         # Master surface (previous) - Nb uses rp,sp which are already numeric        
-        self.master_surf_XYZ_old = get_deformed_position(self.master_surf_nodes, FEMod.X, PreDisp)
+        self.master_surf_XYZ_old = get_deformed_position(self.master_surf_cells[self.master_surf_idx,:], FEMod.X, PreDisp)
         self.master_point_old = self.Nb @ self.master_surf_XYZ_old
+        
+    def get_contact_dofs(self):
+        master_dofs = get_dofs_given_nodes_ids(self.master_surf_cells[self.master_surf_idx,:])
+        return np.concatenate([self.surf_dofs, master_dofs])       
         
     
 class ContactPairs:
@@ -120,41 +115,25 @@ class ContactPairs:
         """
         
         self.FricFac = FricFac 
-        
-        
-        self.SlaveSurf_mesh = FEMod.facets[slave_surf_id]
-        self.MasterSurf_mesh = FEMod.facets[master_surf_id] 
-        
-        self.nMasterSurf = self.MasterSurf_mesh.shape[1]
-        self.master_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[self.MasterSurf_mesh[0, i], :], 
-                                                            self.MasterSurf_mesh[1, i]) 
-                                            for i in range(self.nMasterSurf)], dtype = np.int64) 
-        
-        self.nSlaveSurf = self.SlaveSurf_mesh.shape[1]
-        self.slave_surf_cells = np.array([ GetSurfaceNode(FEMod.cells[self.SlaveSurf_mesh[0, i], :], 
-                                                            self.SlaveSurf_mesh[1, i]) 
-                                            for i in range(self.nSlaveSurf)], dtype = np.int64)   
+        self.slave_surf_cells = FEMod.facets[slave_surf_id]
+        self.master_surf_cells = FEMod.facets[master_surf_id]
         
         self.master_surf_nodes = np.setdiff1d(self.master_surf_cells.flatten(), [])
 
-        nSlave = self.SlaveSurf_mesh.shape[1]
+        nSlave = self.slave_surf_cells.shape[0]
 
         self.slave_points = []
         for i in range(nSlave):
             for j in range(nGauss):
                 k = i*nGauss + j
-                self.slave_points.append(SlavePointData(FEMod, k, self.SlaveSurf_mesh[0,i], self.SlaveSurf_mesh[1,i], j))
+                self.slave_points.append(SlavePointData(FEMod, k, i, j, self.slave_surf_cells[i,:]))
 
         SlavePointData.master_surf_cells = self.master_surf_cells
         
     def update_master_slave_XYZ(self, FEMod, Disp):
         self.master_surf_XYZ = get_deformed_position(self.master_surf_cells.flatten(), FEMod.X, Disp).reshape((-1,4,3)) 
         self.slave_surf_XYZ =  get_deformed_position(self.slave_surf_cells.flatten(), FEMod.X, Disp).reshape((-1,4,3))  # 120x4x3
-
-    def get_contact_dofs(self, FEMod, i):
-        contact_dofs = np.concatenate([self.slave_points[i].surf_dofs, 
-                                       self.slave_points[i].master_surf_dofs])
-        return contact_dofs            
+     
 
     def update_history_slave_points(self):
         """
@@ -163,8 +142,7 @@ class ContactPairs:
         for sp in self.slave_points:
             if sp.contact_state == 0:
                 # --- No contact ---
-                sp.master_surf_old = -1
-                sp.master_surf_facet_old = -1
+                sp.master_surf_idx_old = -1
                 sp.Xi_old.fill(0.)
                 sp.contact_state_old = 0
                 sp.gap_old = 0.0
@@ -172,8 +150,7 @@ class ContactPairs:
                 sp.traction = 0.0
             else:
                 # --- Slip or stick contact ---
-                sp.master_surf_old  = sp.master_surf
-                sp.master_surf_facet_old  = sp.master_surf_facet
+                sp.master_surf_idx_old  = sp.master_surf_idx
                 sp.Xi_old[:] = sp.Xi[:]
                 sp.contact_state_old = sp.contact_state
                 sp.gap_old = sp.gap

@@ -60,15 +60,14 @@ def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePoin
     """
 
     SlavePoint_ = SlavePoint.flatten().astype(np.float64)
-    MasterSurf = ContactPairs.MasterSurf_mesh  
     master_surf_nodes = ContactPairs.master_surf_nodes
     
     MinMasterPoint = master_surf_nodes[ tree.query(SlavePoint_.reshape((1,3)))[1][0] ]
     
     # --- Determine candidate master surfaces ---
     AllMinMasterSurfNum = np.where(ContactPairs.master_surf_cells  == MinMasterPoint)[0]
-    ContactCandidate = np.zeros((AllMinMasterSurfNum.shape[0], 6))
-    ContactCandidate[:,4] = 1e7 # reserved for the gap
+    ContactCandidate = np.zeros((AllMinMasterSurfNum.shape[0], 5))
+    ContactCandidate[:,3] = 1e7 # reserved for the gap
     
     if(method == "newton"):
         raytracing = newton_raphson_raytracing
@@ -78,31 +77,27 @@ def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePoin
     # --- Loop over candidate master surfaces ---
     for idx, surf_idx in enumerate(AllMinMasterSurfNum):
         rs, Exist, g = raytracing(SlavePoint_, SlavePointFrame, MasterSurfXYZ[surf_idx, :, :])
-            
-        ContactCandidate[idx, 0] = MasterSurf[0, surf_idx]
-        ContactCandidate[idx, 1] = MasterSurf[1, surf_idx]
-        ContactCandidate[idx, 2:4] = rs[:]
-        ContactCandidate[idx, 4] = g
-        ContactCandidate[idx, 5] = Exist
-        
+        ContactCandidate[idx, 0] = surf_idx
+        ContactCandidate[idx, 1:3] = rs[:]
+        ContactCandidate[idx, 3] = g
+        ContactCandidate[idx, 4] = Exist
         
     # --- Final contact outputs ---
-    Exist = int(np.max(ContactCandidate[:, -1]))
+    Exist = int(np.max(ContactCandidate[:, 4]))
     if Exist == 0 or Exist == 1:
-        idxmin = np.argmin(ContactCandidate[:, 4])
-        MasterEle = ContactCandidate[idxmin, 0]
-        MasterSign = ContactCandidate[idxmin, 1]
-        rr = ContactCandidate[idxmin, 2]
-        ss = ContactCandidate[idxmin, 3]
-        gg = ContactCandidate[idxmin, 4]
+        idxmin = np.argmin(ContactCandidate[:, 3])
+        Master_idx = ContactCandidate[idxmin, 0]
+        rr = ContactCandidate[idxmin, 1]
+        ss = ContactCandidate[idxmin, 2]
+        gg = ContactCandidate[idxmin, 3]
+        
     else:
-        MasterEle = 1e10
-        MasterSign = 1e10
+        Master_idx = 1e10
         rr = 1e10
         ss = 1e10
         gg = 1e10
 
-    return rr, ss, int(MasterEle), int(MasterSign), gg, Exist
+    return int(Master_idx), rr, ss, gg, Exist
 
 @numba.jit(nopython=True, cache=True)
 def raytracing_moller_trumbore_tri(o, d, v0, v1, v2, eps=1e-9):
