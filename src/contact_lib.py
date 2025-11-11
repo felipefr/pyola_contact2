@@ -38,11 +38,11 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
             sp.contact_state = decide_stick_slip(sp, FricFac)
             
         if(sp.contact_state == 1): # stick
-            KL, ResL, ContactPairs = CalculateContactKandF_stick2(sp, FEMod, ContactPairs)
+            KL, ResL, ContactPairs = CalculateContactKandF_stick(sp, FEMod, ContactPairs)
         
         elif(sp.contact_state == 2): # slip        
             sp.update_old(FEMod, PreDisp)
-            KL, ResL, ContactPairs = CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt)   
+            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)   
 
         dofs = sp.get_contact_dofs()
         Residual[dofs] += ResL
@@ -208,6 +208,7 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Cur_N1Xa, Cur_N2Xa = Cur_NXa
     Cur_n = sp.frame[0]
     J1 = sp.J 
+    
     Pre_N1Xa, Pre_N2Xa, Pre_x1 = sp.frame_old[1], sp.frame_old[2], sp.point_old
     
     # --- master geometry at current geo, with current and previous steps ---
@@ -217,8 +218,28 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Cur_NXb = sp.master_tangent
     Cur_x2 = sp.master_point
     Pre_x2 = sp.master_point_old
+    
+    tau1 = Cur_NXa.T
+    tau2 = Cur_NXb.T
 
     Ngap = np.block([-np.kron(Na, I3), np.kron(Nb, I3)])
+    
+    # i : spatial dimension derivative
+    # j : nodes
+    # k : spatial dimension component
+    
+    B1 = np.kron(dNa, I3).reshape((2,3,12))
+    B2 = np.kron(dNb, I3).reshape((2,3,12))
+    
+    B1tilde = np.zeros((2,3,24))
+    B1tilde[:,:,0:12] = B1
+    
+    B2tilde = np.zeros((2,3,24))
+    B2tilde[:,:,12:] = B2
+    
+    Ginv = np.linalg.inv(Cur_NXa @ Cur_NXb.T)  # inverse
+    Deta = - Ginv @ ( tau1.T@Ngap + sp.gap*np.einsum('j, ijk -> ik', Cur_n, B1tilde))
+    Ngap_star = Ngap + tau2@Deta
     
     # increments
     dx1 = Cur_x1 - Pre_x1
@@ -234,10 +255,10 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
     Ac_tilde = np.block([Ac, np.zeros((3,12))])     
 
-    dg1_slave = Cur_N1Xa - Pre_N1Xa
-    dg2_slave = Cur_N2Xa - Pre_N2Xa
-    m1 = np.cross(dg1_slave, Cur_N2Xa) + np.cross(Cur_N1Xa, dg2_slave)
-    c1 = (PN @ m1) / J1 # variation of the normal? Delta n?
+    # dg1_slave = Cur_N1Xa - Pre_N1Xa
+    # dg2_slave = Cur_N2Xa - Pre_N2Xa
+    # m1 = np.cross(dg1_slave, Cur_N2Xa) + np.cross(Cur_N1Xa, dg2_slave)
+    # c1 = (PN @ m1) / J1 # variation of the normal? Delta n?
     dn = Cur_n - sp.frame_old[0]
     
     # --- relative velocity and tangential direction ---
@@ -255,59 +276,16 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
         dh = 0.0  # not used further here (kept for parity)
 
     Qvr = -np.outer(Cur_n, vr) - np.dot(Cur_n, vr)*I3
-    Rtilde = ((np.outer(dn, Cur_n) - I3) @ Ngap + (np.outer(dn, gvec) + sp.gap*I3)@PNAc_tilde)/Dt
+    Rtilde = (np.outer(dn, Cur_n)@Ngap - I3 @ Ngap_star + (np.outer(dn, gvec) + sp.gap*I3)@PNAc_tilde)/Dt
     Ds = Ps @ (Qvr@PNAc_tilde + Rtilde)
     
     tn = sp.penc * sp.gap 
     tv = tn * (Cur_n +  FricFac * s1)
     
-    Dtv = np.outer( sp.penc*tv/tn , Ngap.T@Cur_n + PNAc_tilde.T@gvec) + tn*PNAc_tilde + tn*FricFac*Ds 
-    
-    
-    # =============== just old computation ===============
-    # # --- master geometry at current and previous steps ---
-    # dx2 = Cur_x2 - Pre_x2
-
-    # # --- precompute projection matrices and related arrays ---    
-    # # Compute the 2x2 coupling matrix
-    # a_ab = np.linalg.inv(Cur_NXa @ Cur_NXb.T)  # inverse
-    
-    # # Compute bar vectors (each row is g1/g2 vector)
-    # g_bar_slave  = a_ab @ Cur_NXb       # shape (2, n), rows: g1_bar_slave, g2_bar_slave
-    # g_bar_master = a_ab.T @ Cur_NXa     # shape (2, n), rows: g1_bar_master, g2_bar_master
-    
-    # # Optional: extract individual vectors
-    # g1_bar_slave, g2_bar_slave   = g_bar_slave[0, :], g_bar_slave[1, :]
-    # g1_bar_master, g2_bar_master = g_bar_master[0, :], g_bar_master[1, :]
-    
-    # # Projections
-    # N1 = np.outer(Cur_n, Cur_n)
-    # N1_bar = I3 - np.outer(Cur_N1Xa, g1_bar_slave) - np.outer(Cur_N2Xa, g2_bar_slave)
-
-    # # mc1_bar, mb2_bar: (3 x 4) each
-    # mc1_bar = np.kron(dNa[0].T, g1_bar_slave.reshape(-1,1)) + np.kron(dNa[1].T, g2_bar_slave.reshape(-1,1))
-    # mb2_bar = np.kron(dNb[0].T, g1_bar_master.reshape(-1,1)) + np.kron(dNb[1].T, g2_bar_master.reshape(-1,1))
-
-    # Cur_g1_hat_slave = TransVect2SkewSym(Cur_N1Xa)
-    # Cur_g2_hat_slave = TransVect2SkewSym(Cur_N2Xa)
-    # Ac = (np.kron(dNa[0].T, Cur_g2_hat_slave) - np.kron(dNa[1].T, Cur_g1_hat_slave)) / J1
-
-    # # N1_wave is a 3x3 matrix: outer(Cur_n, N1_bar @ Cur_n)
-    # N1_wave = np.outer(Cur_n, N1_bar.dot(Cur_n))
-
-    # # Mc1_bar & Mb2_bar arranged as in original code (3 x 12)
-    # Mc1_bar = np.hstack([np.outer(Cur_n, mc1_bar[:, k]) for k in range(4)])
-    # Mb2_bar = - np.hstack([np.outer(Cur_n, mb2_bar[:, k]) for k in range(4)])
-
-    # # Gbc: shape (4,4)
-    # Gbc = sp.gap * (dNb.T @ a_ab @ dNa)   # result 4x4
-    # ===========================================================
-    
-    #KL = -get_frictionless_K(Na, Nb, sp.penc, tn, Ac, Mc1_bar, Mb2_bar, Gbc, N1, N1_wave, J1)
-
+    Dtv = np.outer( sp.penc*tv/tn , Ngap_star.T@Cur_n + PNAc_tilde.T@gvec) + tn*PNAc_tilde + tn*FricFac*Ds 
      
     ContactNodeForce = -J1*Ngap.T@tv # the residual is perfect
-    KL = J1*Ngap.T@ (Dtv + np.outer(tv, Cur_n) @ Ac_tilde )
+    KL = -Ngap.T@ (J1*Dtv + np.outer(tv, Cur_n) @ Ac_tilde) - J1*np.einsum('j, ijk -> ki', tv, B2tilde) @ Deta
 
     sp.pressure  = abs(tn)
     sp.traction = np.linalg.norm(tv)

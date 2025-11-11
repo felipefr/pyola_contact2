@@ -18,7 +18,7 @@ from fem_lib import *
 from contact_lib import *
 from utils import *
 from timeit import default_timer as timer
-from mesh import Mesh
+from mesh import *
 from contact_pairs import ContactPairs
 
 
@@ -30,18 +30,18 @@ Tmax = 0.15
 Nit = 4
 NNRmax = 20
 tolNR = 1e-7
-FricFac = 0.1
+FricFac = 0.0
+E = 210000
+nu = 0.3
 TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
-FEMod = Mesh('Beam.inp', 
+FEMod = MeshINP('Beam.inp', 
              facets_id = [('_MASTERSURF_S4',3), ('_SLAVESURF_S6',5)],
              force_bnd_id = 'SET-4',
              dirichlet_bnd_id ='CONNODE')
     
-
 # --- Material ---
-E=FEMod.Prop[0,0]; nu=FEMod.Prop[0,1];
 Dtan= get_isotropic_celas(E, nu);
 
 # --- Contact ---
