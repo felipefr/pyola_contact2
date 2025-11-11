@@ -25,17 +25,17 @@ class Mesh:
         self.ndim = self.X.shape[1]
         
         # Force Bcs
-        ForceNode = m.point_sets[force_bnd_id].astype(np.int64) + 1 # matlab convention
+        ForceNode = m.point_sets[force_bnd_id].astype(np.int64) # python convention
         self.ExtF = np.zeros((len(ForceNode), 3)).astype(np.float64)
         for i, node in enumerate(ForceNode):
-            self.ExtF[i, :] = [node, 2, -4e4]
+            self.ExtF[i, :] = [node, 1, -4e4]
         
         # Displacement boundary conditions
-        ConNode = m.point_sets[dirichlet_bnd_id].astype(np.int64) + 1 # matlab convention
+        ConNode = m.point_sets[dirichlet_bnd_id].astype(np.int64) # python convention
         self.Cons = np.zeros((len(ConNode) * 3, 3)).astype(np.float64)
         for i, node in enumerate(ConNode):
             for j in range(self.ndim):
-                self.Cons[3 * i + j, :] = [node, j+1, 0]
+                self.Cons[3 * i + j, :] = [node, j, 0]
                 
         # Contact boundaries
         self.facets = []

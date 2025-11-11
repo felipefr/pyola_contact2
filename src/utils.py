@@ -151,7 +151,8 @@ def GetSurfaceNode(elementLE, SurfSign, matlab_shift = 0):
 def GetSurfaceXYZ(cells, X, Disp, surf):
     SurfNodes = GetSurfaceNode(cells[surf[0],:], surf[1])
     SurfDOF = get_dofs_given_nodes_ids(SurfNodes)
-    XYZ = get_deformed_position_given_dofs(SurfNodes, X, Disp, SurfDOF)
+    # XYZ = get_deformed_position_given_dofs(SurfNodes, X, Disp, SurfDOF)
+    XYZ = get_deformed_position_given_dofs(SurfDOF, X, Disp)
     return XYZ, SurfDOF
 
 

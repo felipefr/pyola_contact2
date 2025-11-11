@@ -57,7 +57,6 @@ def newton_raphson_raytracing(SlavePoint, SlavePointFrame, MasterSurfXYZ):
 def GetContactPointbyRayTracing(FEMod, ContactPairs, Disp, SlavePoint, SlavePointFrame, MasterSurfXYZ, tree, method = "newton"):
     """
     Obtain master surface contact point by ray tracing.
-    FEMod numbering follows MATLAB (1-based)
     """
 
     SlavePoint_ = SlavePoint.flatten().astype(np.float64)

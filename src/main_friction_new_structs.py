@@ -30,7 +30,7 @@ Tmax = 0.15
 Nit = 4
 NNRmax = 20
 tolNR = 1e-7
-FricFac = 0.0
+FricFac = 0.1
 TimeList = np.linspace(0.0, Tmax, 10)
 
 # --- Mesh and model ---
@@ -51,7 +51,7 @@ contactPairs = ContactPairs(FEMod, FricFac = FricFac, master_surf_id = 0, slave_
 NodeNum, Dim = FEMod.X.shape
 AllDOF = Dim * NodeNum
 
-FixDOF = Dim * (FEMod.Cons[:, 0] - 1) + FEMod.Cons[:, 1] - 1 
+FixDOF = Dim * FEMod.Cons[:, 0] + FEMod.Cons[:, 1]
 FixDOF = FixDOF.astype(np.int64)
 FreeDOF = np.setdiff1d(np.arange(AllDOF), FixDOF).astype(np.int64)
 
@@ -85,7 +85,7 @@ for i in range(Nit - 1):
         
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:
-            LOC = Dim * (FEMod.ExtF[:, 0].astype(int) - 1) + FEMod.ExtF[:, 1].astype(int) - 1  # convert to 0-based
+            LOC = Dim * FEMod.ExtF[:, 0].astype(int) + FEMod.ExtF[:, 1].astype(int) 
             ExtFVect[LOC] += LoadFac * FEMod.ExtF[:, 2]
         Residual += ExtFVect
 

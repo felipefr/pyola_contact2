@@ -23,15 +23,13 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
     Only small indexing/shape fixes applied (int casts, no reshape).
     """
     
-    ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)))
+    idx_active = ContactSearch(FEMod, ContactPairs, Disp.reshape((-1,1)))
 
     FricFac = ContactPairs.FricFac
     
     # --- Loop over contact pairs
-    for i, sp in enumerate(ContactPairs.slave_points):
-        # Check for active contact
-        if sp.master_surf == -1:    
-            continue  # No contact
+    for i in idx_active:
+        sp = ContactPairs.slave_points[i]
 
         # Case 1: first contact or frictionless contact
         if (FricFac == 0) or (sp.master_surf_old == -1): 
@@ -40,11 +38,11 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
             sp.contact_state = decide_stick_slip(sp, FricFac)
             
         if(sp.contact_state == 1): # stick
-            KL, ResL, ContactPairs = CalculateContactKandF_stick(sp, FEMod, ContactPairs)
+            KL, ResL, ContactPairs = CalculateContactKandF_stick2(sp, FEMod, ContactPairs)
         
-        elif(sp.contact_state == 2): # slip    
+        elif(sp.contact_state == 2): # slip        
             sp.update_old(FEMod, PreDisp)
-            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)   
+            KL, ResL, ContactPairs = CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt)   
 
         dofs = ContactPairs.get_contact_dofs(FEMod, i)
         Residual[dofs] += ResL
@@ -59,6 +57,8 @@ def ContactSearch(FEMod, ContactPairs, Disp):
     MasterSurfNodeXYZ = get_deformed_position(ContactPairs.master_surf_nodes, FEMod.X, Disp) # redudant computations
     tree = cKDTree(MasterSurfNodeXYZ)
     
+    idx_active = []
+    
     for i, sp in enumerate(ContactPairs.slave_points):  
         sp.update_slave(FEMod, Disp)
         rr, ss, MasterEle, MasterSign, gg, Exist = GetContactPointbyRayTracing(
@@ -71,6 +71,7 @@ def ContactSearch(FEMod, ContactPairs, Disp):
             sp.Xi = np.array([rr, ss])
             sp.gap = gg
             sp.update_master(FEMod, Disp)
+            idx_active.append(i)
         else:
             # print("contact not found at ", i)
             sp.master_surf = -1
@@ -78,6 +79,7 @@ def ContactSearch(FEMod, ContactPairs, Disp):
             sp.Xi.fill(0.)
             sp.gap = 0.
 
+    return idx_active
 
 # original version
 def CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt):
