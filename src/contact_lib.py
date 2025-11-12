@@ -363,6 +363,7 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     dx1 = Cur_x1 - Pre_x1
     dx2 = Cur_x2 - Pre_x2
     
+    # try with PN_old (staggered, so no need to linearise)
     dtau1 = tau1 - np.vstack((Pre_N1Xa, Pre_N2Xa))
     m1 = np.cross(dtau1[0], tau1[1]) + np.cross(tau1[0], dtau1[1])
     dn = (PN @ m1) / J1 
@@ -376,10 +377,11 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     
     AcDu = m1/J1 # A[Du]
     QAcDu = getQ(AcDu, Cur_n)
-    Ddn = QAcDu@PNAc_tilde - PN@(np.outer(AcDu , Ac_tilde.T@Cur_n) - dAc_tilde) 
+    # Ddn = QAcDu@PNAc_tilde - PN@np.outer(AcDu , Ac_tilde.T@Cur_n) + PN@dAc_tilde + PNAc_tilde 
+    Ddn = QAcDu@PNAc_tilde - PN@np.outer(AcDu , Ac_tilde.T@Cur_n) + PN@dAc_tilde + PNAc_tilde 
 
-    # Dvr = np.outer(dn, Cur_n)@Dgap + gap*Ddn - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
-    Dvr = np.outer(dn, Cur_n)@Dgap - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
+    Dvr = np.outer(dn, Cur_n)@Dgap + gap*Ddn - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
+    # Dvr = np.outer(dn, Cur_n)@Dgap - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
     Dvr = Dvr/Dt
     
     Qvr = getQ(vr,Cur_n)
