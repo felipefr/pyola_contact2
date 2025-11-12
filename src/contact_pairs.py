@@ -65,8 +65,8 @@ class SlavePointData:
         self.surf_dofs = get_dofs_given_nodes_ids(self.surf_nodes)       
         
     def update_slave(self, FEMod, Disp): # integral points already chosen
-        surfXYZ =  get_deformed_position(self.surf_nodes, FEMod.X, Disp)
-        self.point, self.frame, self.J = get_surface_frame(FEMod.ShpfSurf[self.idxIP][0], FEMod.ShpfSurf[self.idxIP][1], surfXYZ)
+        self.surfXYZ =  get_deformed_position(self.surf_nodes, FEMod.X, Disp)
+        self.point, self.frame, self.J = get_surface_frame(FEMod.ShpfSurf[self.idxIP][0], FEMod.ShpfSurf[self.idxIP][1], self.surfXYZ)
     
     def update_master(self, FEMod, Disp):
         # Master surface (previous) - Nb uses rp,sp which are already numeric

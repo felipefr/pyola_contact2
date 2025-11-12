@@ -42,7 +42,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
         elif(sp.contact_state == 2): # slip        
             sp.update_old(FEMod, PreDisp)
-            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)   
+            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)  
 
         dofs = sp.get_contact_dofs()
         Residual[dofs] += ResL
@@ -274,6 +274,34 @@ def CalculateContactKandF_slip3(sp, FEMod, ContactPairs, Dt):
 
 # My version: still does not converges
 # Rtilde has terms with different dimensions
+
+def getQ(w,n):
+    return -np.outer(n, w) - np.dot(n, w)*np.eye(3)
+
+def getA(tau, dN, J):
+    I3 = np.eye(3)
+    tau1_hat = TransVect2SkewSym(tau[0])
+    tau2_hat = TransVect2SkewSym(tau[1])
+    A = (tau1_hat @ np.kron(dN[1], I3) - tau2_hat @ np.kron(dN[0], I3))/J
+    return A
+
+def get_slip(dn, gap, dx1, dx2, Dt, PN):
+    I3 = np.eye(3)
+    r1 = gap * dn + dx1 - dx2
+    vr = r1 / Dt
+    PNvr = PN.dot(vr)
+    PNvr_norm = np.linalg.norm(PNvr)
+    
+    if PNvr_norm > 1e-8:
+        s1 = PNvr / PNvr_norm
+        Ps = (I3 - np.outer(s1,s1))/PNvr_norm
+    else:
+        Ps = I3
+        s1 = np.zeros(3)
+        dh = 0.0  # not used further here (kept for parity)
+
+    return vr, s1, Ps
+
 def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     """
     Python translation of the MATLAB CalculateFrictionlessContactKandF.
@@ -323,73 +351,49 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     
     # projection at slave
     PN = I3 - np.outer(Cur_n, Cur_n)
-    Cur_g1_hat_slave = TransVect2SkewSym(tau1[0])
-    Cur_g2_hat_slave = TransVect2SkewSym(tau1[1])
-    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
+    Ac = getA(tau1, dNa, J1)
     PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
-    Ac_tilde = np.block([Ac, np.zeros((3,12))])     
+    Ac_tilde = np.block([Ac, np.zeros((3,12))])
+    Dgap = Ngap_star + gap*PNAc_tilde  # operator relatated to the variation of gap d(gap*w) = outer(w,n)@Dgap
     
-    
-    
-    # projection at slave
-    PN = I3 - np.outer(Cur_n, Cur_n)
-    Cur_g1_hat_slave = TransVect2SkewSym(tau1[0])
-    Cur_g2_hat_slave = TransVect2SkewSym(tau1[1])
-    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
-    # Ac = np.block([[-Cur_g2_hat_slave, Cur_g2_hat_slave]]) @ np.kron(dNa, I3)/J1 # different by a minus sign
-    PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
-    Ac_tilde = np.block([Ac, np.zeros((3,12))])     
-
     Dtn = eps*( gap*(np.outer(Cur_n,Cur_n) + I3)@PNAc_tilde + np.outer(Cur_n,Cur_n)@Ngap_star)
         
 
     # increments
     dx1 = Cur_x1 - Pre_x1
     dx2 = Cur_x2 - Pre_x2
-    gvec = Cur_x2 - Cur_x1
     
-    dg1_slave = tau1[0] - Pre_N1Xa
-    dg2_slave = tau1[1] - Pre_N2Xa
-    m1 = np.cross(dg1_slave, tau1[1]) + np.cross(tau1[0], dg2_slave)
-    c1 = (PN @ m1) / J1 # variation of the normal? Delta n?
-    dn = c1
-    # dn = Cur_n - sp.frame_old[0]
+    dtau1 = tau1 - np.vstack((Pre_N1Xa, Pre_N2Xa))
+    m1 = np.cross(dtau1[0], tau1[1]) + np.cross(tau1[0], dtau1[1])
+    dn = (PN @ m1) / J1 
     
     # --- relative velocity and tangential direction ---
-    r1 = sp.gap * dn + dx1 - dx2
-    vr = r1 / Dt
-    PNvr = PN.dot(vr)
-    PNvr_norm = np.linalg.norm(PNvr)
-    
-    if PNvr_norm > 1e-8:
-        s1 = PNvr / PNvr_norm
-        Ps = (I3 - np.outer(s1,s1))/PNvr_norm
-    else:
-        Ps = I3
-        s1 = np.zeros(3)
-        dh = 0.0  # not used further here (kept for parity)
+    vr, s, Ps = get_slip(dn, gap, dx1, dx2, Dt, PN)
 
-    Qvr = -np.outer(Cur_n, vr) - np.dot(Cur_n, vr)*I3
-    # Rtilde = (np.outer(dn, Cur_n)@Ngap - I3 @ Ngap_star + (np.outer(dn, gvec) + gap*I3)@PNAc_tilde)/Dt
-    Rtilde = np.outer(dn, Cur_n)@(Ngap_star + gap*PNAc_tilde)
-    Rtilde += ( gap*PNAc_tilde - Ngap_star)
-    Rtilde = Rtilde/Dt
     
-    Ds = Ps @ (Qvr@PNAc_tilde + PN@Rtilde)
+    dAc = getA(dtau1, dNa, J1)
+    dAc_tilde = np.block([dAc, np.zeros((3,12))])  
     
-    Dtmu = eps*FricFac*( np.outer(s1,Cur_n)@( Ngap_star + gap*PNAc_tilde) + gap*Ds )
+    AcDu = m1/J1 # A[Du]
+    QAcDu = getQ(AcDu, Cur_n)
+    Ddn = QAcDu@PNAc_tilde - PN@(np.outer(AcDu , Ac_tilde.T@Cur_n) - dAc_tilde) 
+
+    # Dvr = np.outer(dn, Cur_n)@Dgap + gap*Ddn - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
+    Dvr = np.outer(dn, Cur_n)@Dgap - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
+    Dvr = Dvr/Dt
+    
+    Qvr = getQ(vr,Cur_n)
+    Ds = Ps @ (Qvr@PNAc_tilde + PN@Dvr)
+    
+    Dtmu = eps*FricFac*( np.outer(s,Cur_n)@Dgap + gap*Ds )
     
     Dtv = Dtmu + Dtn 
     tn = eps * gap 
-    tv = tn * (Cur_n +  FricFac * s1)
+    tv = tn * (Cur_n +  FricFac * s)
     
     KL = J1*Ngap.T@Dtv
     KL += J1*Ngap.T@np.outer(tv,Cur_n)@Ac_tilde
-    
-    # according to my reasoning
-    # vaux = J1*tau1@tv
-    # Kaux = Ngap_star.T@np.einsum('i, ijk -> jk', vaux, B1tilde)
-    # KL += (Kaux + Kaux.T)
+
     
     # simpler according to the ansatz of the FEbio paper
     vaux = J1*tv
