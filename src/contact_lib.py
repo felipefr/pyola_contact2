@@ -286,10 +286,11 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     
     Na, dNa = FEMod.ShpfSurf[sp.idxIP]
     Cur_x1 = sp.point
-    Cur_NXa = sp.frame[1:3]
-    Cur_N1Xa, Cur_N2Xa = Cur_NXa
+    tau1 = sp.frame[1:3]
     Cur_n = sp.frame[0]
     J1 = sp.J 
+    gap = sp.gap
+    eps = sp.penc
     
     Pre_N1Xa, Pre_N2Xa, Pre_x1 = sp.frame_old[1], sp.frame_old[2], sp.point_old
     
@@ -297,19 +298,15 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Cur_x2 = sp.master_point
     Nb = sp.Nb
     dNb = sp.dNb
-    Cur_NXb = sp.master_tangent
+    tau2 = sp.master_tangent
     Cur_x2 = sp.master_point
     Pre_x2 = sp.master_point_old
     
-    tau1 = Cur_NXa.T
-    tau2 = Cur_NXb.T
-
     Ngap = np.block([-np.kron(Na, I3), np.kron(Nb, I3)])
     
     # i : spatial dimension derivative
     # j : nodes
     # k : spatial dimension component
-    
     B1 = np.kron(dNa, I3).reshape((2,3,12))
     B2 = np.kron(dNb, I3).reshape((2,3,12))
     
@@ -319,14 +316,20 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     B2tilde = np.zeros((2,3,24))
     B2tilde[:,:,12:] = B2
     
-    Ginv = np.linalg.inv(Cur_NXa @ Cur_NXb.T)  # inverse
-    Deta = - Ginv @ ( tau1.T@Ngap + sp.gap*np.einsum('j, ijk -> ik', Cur_n, B1tilde))
-    Ngap_star = Ngap + tau2@Deta
+    Ginv = np.linalg.inv(tau1 @ tau2.T)  # inverse
+    Deta = - Ginv @ ( tau1@Ngap + gap*np.einsum('j, ijk -> ik', Cur_n, B1tilde))
+    Ngap_star = Ngap + tau2.T@Deta
     
-    # increments
-    dx1 = Cur_x1 - Pre_x1
-    dx2 = Cur_x2 - Pre_x2
-    gvec = Cur_x2 - Cur_x1
+    
+    # projection at slave
+    PN = I3 - np.outer(Cur_n, Cur_n)
+    Cur_g1_hat_slave = TransVect2SkewSym(tau1[0])
+    Cur_g2_hat_slave = TransVect2SkewSym(tau1[1])
+    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
+    PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
+    Ac_tilde = np.block([Ac, np.zeros((3,12))])     
+    
+    
     
     # projection at slave
     PN = I3 - np.outer(Cur_n, Cur_n)
@@ -337,6 +340,14 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
     Ac_tilde = np.block([Ac, np.zeros((3,12))])     
 
+    Dtv = eps*( gap*(np.outer(Cur_n,Cur_n) + I3)@PNAc_tilde + np.outer(Cur_n,Cur_n)@Ngap_star)
+        
+
+    # increments
+    dx1 = Cur_x1 - Pre_x1
+    dx2 = Cur_x2 - Pre_x2
+    gvec = Cur_x2 - Cur_x1
+    
     # dg1_slave = Cur_N1Xa - Pre_N1Xa
     # dg2_slave = Cur_N2Xa - Pre_N2Xa
     # m1 = np.cross(dg1_slave, Cur_N2Xa) + np.cross(Cur_N1Xa, dg2_slave)
@@ -360,6 +371,27 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Qvr = -np.outer(Cur_n, vr) - np.dot(Cur_n, vr)*I3
     Rtilde = (np.outer(dn, Cur_n)@Ngap - I3 @ Ngap_star + (np.outer(dn, gvec) + sp.gap*I3)@PNAc_tilde)/Dt
     Ds = Ps @ (Qvr@PNAc_tilde + Rtilde)
+    
+    
+    KL = J1*Ngap.T@Dtv
+    KL += J1*Ngap.T@np.outer(tv,Cur_n)@Ac_tilde
+    
+    # according to my reasoning
+    # vaux = J1*tau1@tv
+    # Kaux = Ngap_star.T@np.einsum('i, ijk -> jk', vaux, B1tilde)
+    # KL += (Kaux + Kaux.T)
+    
+    # simpler according to the ansatz of the FEbio paper
+    vaux = J1*tv
+    Kaux = np.einsum('i, jik -> kj', vaux, B2tilde)@Deta
+    KL += Kaux
+        
+    ContactNodeForce = -J1*Ngap.T@tv # the residual is perfect
+
+
+    sp.pressure  = abs(tn)
+    sp.traction = np.linalg.norm(tv)
+    
     
     tn = sp.penc * sp.gap 
     tv = tn * (Cur_n +  FricFac * s1)
