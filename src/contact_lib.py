@@ -42,7 +42,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
         elif(sp.contact_state == 2): # slip        
             sp.update_old(FEMod, PreDisp)
-            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)   
+            KL, ResL, ContactPairs = CalculateContactKandF_slip3(sp, FEMod, ContactPairs, Dt)   
 
         dofs = sp.get_contact_dofs()
         Residual[dofs] += ResL
@@ -189,6 +189,88 @@ def CalculateContactKandF_slip2(sp, FEMod, ContactPairs, Dt):
     sp.traction = np.linalg.norm(tv)
     
     return KL, ContactNodeForce, ContactPairs
+
+
+# original version
+# Frictionless version
+def CalculateContactKandF_slip3(sp, FEMod, ContactPairs, Dt):
+    """
+    Python translation of the MATLAB CalculateFrictionlessContactKandF.
+    - i is a zero-based index into ContactPairs (Python convention).
+    - ContactPairs fields are numpy arrays (struct-like object from Oct2Py or dict-like).
+    """
+
+    I3 = np.eye(3)
+    
+    Na, dNa = FEMod.ShpfSurf[sp.idxIP]
+    Cur_x1 = sp.point
+    tau1 = sp.frame[1:3]
+    Cur_n = sp.frame[0]
+    J1 = sp.J 
+    gap = sp.gap
+    eps = sp.penc
+    
+    Pre_N1Xa, Pre_N2Xa, Pre_x1 = sp.frame_old[1], sp.frame_old[2], sp.point_old
+    
+    # --- master geometry at current geo, with current and previous steps ---
+    Cur_x2 = sp.master_point
+    Nb = sp.Nb
+    dNb = sp.dNb
+    tau2 = sp.master_tangent
+    Cur_x2 = sp.master_point
+    Pre_x2 = sp.master_point_old
+    
+    Ngap = np.block([-np.kron(Na, I3), np.kron(Nb, I3)])
+    
+    # i : spatial dimension derivative
+    # j : nodes
+    # k : spatial dimension component
+    B1 = np.kron(dNa, I3).reshape((2,3,12))
+    B2 = np.kron(dNb, I3).reshape((2,3,12))
+    
+    B1tilde = np.zeros((2,3,24))
+    B1tilde[:,:,0:12] = B1
+    
+    B2tilde = np.zeros((2,3,24))
+    B2tilde[:,:,12:] = B2
+    
+    Ginv = np.linalg.inv(tau1 @ tau2.T)  # inverse
+    Deta = - Ginv @ ( tau1@Ngap + gap*np.einsum('j, ijk -> ik', Cur_n, B1tilde))
+    Ngap_star = Ngap + tau2.T@Deta
+    
+    
+    # projection at slave
+    PN = I3 - np.outer(Cur_n, Cur_n)
+    Cur_g1_hat_slave = TransVect2SkewSym(tau1[0])
+    Cur_g2_hat_slave = TransVect2SkewSym(tau1[1])
+    Ac = (Cur_g1_hat_slave @ np.kron(dNa[1], I3) - Cur_g2_hat_slave @ np.kron(dNa[0], I3))/J1 # different by a minus sign
+    PNAc_tilde = np.block([PN@Ac, np.zeros((3,12))])  
+    Ac_tilde = np.block([Ac, np.zeros((3,12))])     
+    
+    tn = eps * gap 
+    tv = tn * Cur_n
+    
+    Dtv = eps*( gap*(np.outer(Cur_n,Cur_n) + I3)@PNAc_tilde + np.outer(Cur_n,Cur_n)@Ngap_star)
+    KL = J1*Ngap.T@Dtv
+    KL += J1*Ngap.T@np.outer(tv,Cur_n)@Ac_tilde
+    
+    # according to my reasoning
+    # vaux = J1*tau1@tv
+    # Kaux = Ngap_star.T@np.einsum('i, ijk -> jk', vaux, B1tilde)
+    # KL += (Kaux + Kaux.T)
+    
+    # simpler according to the ansatz of the FEbio paper
+    vaux = J1*tv
+    Kaux = np.einsum('i, jik -> kj', vaux, B2tilde)@Deta
+    KL += Kaux
+        
+    ContactNodeForce = -J1*Ngap.T@tv # the residual is perfect
+
+
+    sp.pressure  = abs(tn)
+    sp.traction = np.linalg.norm(tv)
+    return KL, ContactNodeForce, ContactPairs
+
 
 # My version: still does not converges
 # Rtilde has terms with different dimensions
