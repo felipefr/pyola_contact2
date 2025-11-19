@@ -78,7 +78,7 @@ for i in range(Nit - 1):
 
         # Internal force and tangent stiffness
         # Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
-        Residual, GKF = GetStiffnessAndForce_opt2(FEMod, Disp, Dtan, Residual)
+        Residual, GKF = GetStiffnessAndForce_opt(FEMod, Dtan, Disp, Residual)
     
         contactPairs, GKF, Residual = CalculateContactKandF(
              FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
