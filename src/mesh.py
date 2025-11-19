@@ -8,6 +8,7 @@ Created on Fri Oct 31 12:54:49 2025
 
 import numpy as np
 from utils import *
+from fem_lib import get_local_shape_derivative
 
 import numpy as np
 import meshio
@@ -64,6 +65,13 @@ class MeshINP:
         
         self.ShpfSurf = [ GetSurfaceShapeFunction(ip) for ip in self.SurfIPs ]
         
+
+        XG = np.array([-0.57735026918963, 0.57735026918963])
+        WGT = np.array([1.0, 1.0])
+        
+        self.IPs = np.array([[x, y, z] for x in XG for y in XG for z in XG])
+        self.WIP = np.array([wx*wy*wz for wx in WGT for wy in WGT for wz in WGT], dtype = np.float64)
+        self.DSF = np.array([ get_local_shape_derivative(xi) for xi in self.IPs ], dtype = np.float64)
         
 
 class MeshMSH:

@@ -28,9 +28,9 @@ from contact_pairs import ContactPairs
 # --- Parameters ---
 Tmax = 0.15
 Nit = 4
-NNRmax = 20
+NNRmax = 50
 tolNR = 1e-7
-FricFac = 0.1
+FricFac = 0.0
 E = 210000
 nu = 0.3
 TimeList = np.linspace(0.0, Tmax, 10)
@@ -78,10 +78,10 @@ for i in range(Nit - 1):
 
         # Internal force and tangent stiffness
         # Residual, GKF = GetStiffnessAndForce(FEMod.X, FEMod.cells, Disp, Residual, GKF, Dtan)
-        Residual, GKF = GetStiffnessAndForce_opt(FEMod.X, FEMod.cells, Disp, Dtan, Residual)
+        Residual, GKF = GetStiffnessAndForce_opt2(FEMod, Disp, Dtan, Residual)
     
         contactPairs, GKF, Residual = CalculateContactKandF(
-            FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
+             FEMod, contactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
         # External load boundary
         if FEMod.ExtF.shape[0] > 0:

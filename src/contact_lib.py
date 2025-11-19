@@ -42,7 +42,7 @@ def CalculateContactKandF(FEMod, ContactPairs, Dt, PreDisp, GKF, Residual, Disp)
         
         elif(sp.contact_state == 2): # slip        
             sp.update_old(FEMod, PreDisp)
-            KL, ResL, ContactPairs = CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt)  
+            KL, ResL, ContactPairs = CalculateContactKandF_slip3(sp, FEMod, ContactPairs, Dt)  
 
         dofs = sp.get_contact_dofs()
         Residual[dofs] += ResL
@@ -357,8 +357,11 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     Dgap = Ngap_star + gap*PNAc_tilde  # operator relatated to the variation of gap d(gap*w) = outer(w,n)@Dgap
     
     Dtn = eps*( gap*(np.outer(Cur_n,Cur_n) + I3)@PNAc_tilde + np.outer(Cur_n,Cur_n)@Ngap_star)
-        
-
+    
+    # Frictionless stiffness
+    KL = J1*Ngap.T@Dtn
+    
+    
     # increments
     dx1 = Cur_x1 - Pre_x1
     dx2 = Cur_x2 - Pre_x2
@@ -378,25 +381,23 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     AcDu = m1/J1 # A[Du]
     QAcDu = getQ(AcDu, Cur_n)
     # Ddn = QAcDu@PNAc_tilde - PN@np.outer(AcDu , Ac_tilde.T@Cur_n) + PN@dAc_tilde + PNAc_tilde 
-    Ddn = QAcDu@PNAc_tilde - PN@np.outer(AcDu , Ac_tilde.T@Cur_n) + PN@dAc_tilde + PNAc_tilde 
+    Ddn = QAcDu@PNAc_tilde - np.outer(dn , Ac_tilde.T@Cur_n) + PN@(dAc_tilde + Ac_tilde) 
 
     Dvr = np.outer(dn, Cur_n)@Dgap + gap*Ddn - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
-    # Dvr = np.outer(dn, Cur_n)@Dgap - Ngap_star # variation of the gap, dn and dx1-dx2, respectively
     Dvr = Dvr/Dt
     
     Qvr = getQ(vr,Cur_n)
     Ds = Ps @ (Qvr@PNAc_tilde + PN@Dvr)
     
     Dtmu = eps*FricFac*( np.outer(s,Cur_n)@Dgap + gap*Ds )
-    
-    Dtv = Dtmu + Dtn 
+     
     tn = eps * gap 
     tv = tn * (Cur_n +  FricFac * s)
     
-    KL = J1*Ngap.T@Dtv
+    
+    KL += J1*Ngap.T@Dtmu
     KL += J1*Ngap.T@np.outer(tv,Cur_n)@Ac_tilde
 
-    
     # simpler according to the ansatz of the FEbio paper
     vaux = J1*tv
     Kaux = np.einsum('i, jik -> kj', vaux, B2tilde)@Deta
@@ -406,6 +407,7 @@ def CalculateContactKandF_slip(sp, FEMod, ContactPairs, Dt):
     
     sp.pressure  = abs(tn)
     sp.traction = np.linalg.norm(tv)
+        
     
     return KL, ContactNodeForce, ContactPairs
 
